@@ -44,7 +44,7 @@ PanelWindow {
     //    The width is clamped between 620 and 940 px; height fills most of the
     //    available vertical space minus the bar gap.
     property real _screenH: screen ? screen.height : 900
-    property real _panelW:  Math.min(940, Math.max(620, (screen ? screen.width : 1920) * 0.50))
+    property real _panelW:  Math.min(1100, Math.max(620, (screen ? screen.width : 1920) * 0.62))
     property real _activeGap: _barAtBottom ? _barGapBot : _barGap
     property real _panelH:  Math.min(_screenH - _activeGap - 24,
                                      Math.max(500, _screenH * 0.78))
@@ -93,6 +93,20 @@ PanelWindow {
         border.color: Qt.rgba(Theme.cOutVar.r, Theme.cOutVar.g,
                               Theme.cOutVar.b, 0.38)
         clip: true
+
+        // Blur mask — ensure blur follows the panel's corner radius exactly
+        // so there is no bleed on any corner.
+        layer.enabled: true
+        layer.effect: Item {
+            readonly property Item src: parent
+            ShaderEffect {
+                anchors.fill: parent
+                property variant source: ShaderEffectSource {
+                    sourceItem: src
+                    hideSource: true
+                }
+            }
+        }
 
         // Scale-in animation from bar direction
         scale: ControlCenterState.visible ? 1.0 : 0.94
@@ -547,12 +561,12 @@ PanelWindow {
                                         CCSection { text: "ASCII Style" }
                                         Flow {
                                             Layout.fillWidth: true
-                                            spacing: 5
+                                            spacing: 4
                                             Repeater {
                                                 model: Object.keys(Config.cavaStyleMap)
                                                 delegate: Rectangle {
                                                     required property string modelData
-                                                    implicitWidth: _csLbl.implicitWidth + 22; height: 30; radius: 9
+                                                    implicitWidth: Math.max(_csLbl.implicitWidth + 22, 60); height: 28; radius: 9
                                                     color: Config.cavaStyle === modelData
                                                         ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
                                                                   Theme.cInversePrimary.b, 0.72)
@@ -587,6 +601,8 @@ PanelWindow {
 
                                         CCSection { text: "Width & Behavior" }
                                         CCSlider { label:"Cava Width";         from:5;to:60;  value:Config.cavaWidth; onMoved:function(v){Config.cavaWidth=v} }
+                                        CCSlider { label:"ASCII Spacing";       from:0;to:4;   value:Config.cavaAsciiSpacing; onMoved:function(v){Config.cavaAsciiSpacing=v} }
+                                        CCToggle { label:"Auto-hide (no media)"; value:Config.cavaAutoHide; onToggled:function(v){Config.cavaAutoHide=v} }
                                         CCToggle { label:"Transparent Inactive"; value:Config.cavaTransparentWhenInactive; onToggled:function(v){Config.cavaTransparentWhenInactive=v} }
                                         CCSlider { label:"Active Opacity";  from:0;to:1;stepSize:0.05;decimals:2; value:Config.cavaActiveOpacity;  onMoved:function(v){Config.cavaActiveOpacity=v} }
                                         CCSlider { label:"Inactive Opacity";from:0;to:1;stepSize:0.05;decimals:2; value:Config.cavaInactiveOpacity;onMoved:function(v){Config.cavaInactiveOpacity=v} }
@@ -620,6 +636,7 @@ PanelWindow {
                                         CCSlider { label:"Ungrouped";     from:-1;to:1;stepSize:0.05;decimals:2; value:Config.ungroupedBgOpacity;    onMoved:function(v){Config.ungroupedBgOpacity=v} }
                                         CCSlider { label:"Media";         from:-1;to:1;stepSize:0.05;decimals:2; value:Config.mediaBgOpacity;        onMoved:function(v){Config.mediaBgOpacity=v} }
                                         CCSlider { label:"Cava";          from:-1;to:1;stepSize:0.05;decimals:2; value:Config.cavaBgOpacity;         onMoved:function(v){Config.cavaBgOpacity=v} }
+                                        CCSlider { label:"Distro";        from:-1;to:1;stepSize:0.05;decimals:2; value:Config.distroBgOpacity;       onMoved:function(v){Config.distroBgOpacity=v} }
                                         CCSlider { label:"Active Window"; from:-1;to:1;stepSize:0.05;decimals:2; value:Config.activeWindowBgOpacity; onMoved:function(v){Config.activeWindowBgOpacity=v} }
 
                                         CCSection { text: "Active Window" }
@@ -636,6 +653,10 @@ PanelWindow {
 
                                         CCSection { text: "Show / Hide Modules" }
                                         CCToggle { label:"Cava";           value:Config.showCava;           onToggled:function(v){Config.showCava=v} }
+                                        // When Cava is shown AND auto-hide is on, cava hides/shows
+                                        // based on mpris.  When Cava is manually hidden here, it
+                                        // stays hidden regardless of auto-hide or mpris status.
+                                        CCToggle { label:"Cava Auto-hide"; value:Config.cavaAutoHide;       onToggled:function(v){Config.cavaAutoHide=v} }
                                         CCToggle { label:"Weather";        value:Config.showWeather;        onToggled:function(v){Config.showWeather=v} }
                                         CCToggle { label:"Battery";        value:Config.showBattery;        onToggled:function(v){Config.showBattery=v} }
                                         CCToggle { label:"Media Player";   value:Config.showMediaPlayer;    onToggled:function(v){Config.showMediaPlayer=v} }
@@ -847,14 +868,14 @@ PanelWindow {
     }
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  Wallpaper Picker Overlay
+    //  Wallpaper Picker Overlay  (User-Icon selector)
     //  Opens ABOVE the control center when the user icon is clicked.
-    //  Grid of thumbnails; right-click any thumbnail → "Set as user icon" popover.
+    //  Left sidebar for directory navigation; grid of imagemagick thumbnails.
+    //  Single-click any thumbnail → set as user icon (~/.config/hyprcandy/user-icon.png).
     // ═══════════════════════════════════════════════════════════════════════
     Rectangle {
         id: wpPickerOverlay
 
-        // Positioned to cover the control center panel area; sits above it via z-order
         anchors.fill: panel
         z: 10
         visible: false
@@ -871,275 +892,443 @@ PanelWindow {
         Behavior on scale   { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
         Behavior on opacity { NumberAnimation { duration: 140 } }
 
-        function open()  { visible = true; wpScanProc.running = true }
-        function close() { visible = false; wpContextMenu.visible = false }
+        function open()  {
+            visible = true
+            if (_currentDir === "")
+                _currentDir = Config.home + "/Pictures/Wallpapers"
+            wpScanProc.running = true
+            _sidebarOpen = true
+            _scanSidebarDirs(_parentOf(_currentDir))
+        }
+        function close() { visible = false }
 
-        // State
-        property var _wallpapers: []
-        property string _contextTarget: ""
-        property int    _ctxX: 0
-        property int    _ctxY: 0
+        // ── State ────────────────────────────────────────────────────────
+        property var    _wallpapers:    []
+        property string _currentDir:    ""
+        property bool   _sidebarOpen:   true
+        property string _sidebarPath:   Config.home + "/Pictures"
+        property var    _sidebarDirs:   []
 
-        // Scan wallpaper directory
+        // Thumbnail pipeline state
+        property var    _thumbQueue:    []
+        property bool   _thumbRunning:  false
+
+        function _parentOf(p) {
+            if (!p) return Config.home
+            const s = p.endsWith("/") ? p.slice(0, -1) : p
+            const idx = s.lastIndexOf("/")
+            return idx > 0 ? s.substring(0, idx) : "/"
+        }
+
+        function _pathHash(p) {
+            let h = 5381
+            for (let i = 0; i < p.length; i++)
+                h = ((h << 5) + h + p.charCodeAt(i)) >>> 0
+            return ('00000000' + h.toString(16)).slice(-8)
+        }
+
+        function _scanSidebarDirs(path) {
+            _sidebarPath = path
+            wpSidebarProc._buf = []
+            wpSidebarProc._path = path
+            if (wpSidebarProc.running) wpSidebarProc.running = false
+            Qt.callLater(function() { wpSidebarProc.running = true })
+        }
+
+        function _selectDir(path) {
+            _currentDir = path
+            _wallpapers = []
+            _thumbQueue = []
+            wpScanProc.running = true
+        }
+
+        function _thumbRequest(path) {
+            if (!path) return
+            if (_thumbQueue.indexOf(path) < 0) _thumbQueue.push(path)
+            _thumbDrain()
+        }
+
+        function _thumbDrain() {
+            if (_thumbRunning || _thumbQueue.length === 0) return
+            const path = _thumbQueue.shift()
+            const hash = _pathHash(path)
+            const dst  = "/tmp/qs_cc_thumbs/" + hash + ".png"
+            const safe  = path.replace(/'/g, "'\\''")
+            const safed = dst.replace(/'/g, "'\\''")
+            const isGif  = path.toLowerCase().endsWith(".gif")
+            const srcArg = isGif ? ("'" + safe + "'[0]") : ("'" + safe + "'")
+            _thumbRunning = true
+            wpThumbProc._origPath = path
+            wpThumbProc._dst      = dst
+            wpThumbProc._cmd =
+                "mkdir -p /tmp/qs_cc_thumbs; " +
+                "[ -f '" + safed + "' ] && { echo ok; exit 0; }; " +
+                "magick " + srcArg + " " +
+                "-resize 160x100^ -gravity center -extent 160x100 " +
+                "\\( +clone -alpha extract " +
+                "   -fill black -colorize 100 " +
+                "   -fill white -draw 'roundrectangle 0,0 159,99 12,12' \\) " +
+                "-alpha off -compose CopyOpacity -composite " +
+                "-strip '" + safed + "' 2>/dev/null && echo ok"
+            wpThumbProc.running = true
+        }
+
+        signal _thumbReady(string origPath, string thumbSrc)
+
+        // ── Scan wallpaper directory ─────────────────────────────────────
         Process {
             id: wpScanProc
             command: ["bash", "-c",
-                "find \"${HOME}/Pictures/Wallpapers\" -maxdepth 2 " +
-                "\\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \\) " +
-                "2>/dev/null | sort | head -80"]
+                "find \"" + wpPickerOverlay._currentDir + "\" -maxdepth 1 " +
+                "-type f \\( -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.png' -o -iname '*.webp' \\) " +
+                "2>/dev/null | sort | head -120"]
             running: false
+            property var _buf: []
             stdout: SplitParser {
                 splitMarker: "\n"
                 onRead: function(l) {
-                    if (l.trim()) {
-                        const w = wpPickerOverlay._wallpapers
-                        w.push(l.trim())
-                        wpPickerOverlay._wallpapers = w.slice()
-                    }
+                    if (l.trim()) wpScanProc._buf.push(l.trim())
                 }
             }
-            onRunningChanged: {
-                if (running) wpPickerOverlay._wallpapers = []
+            onRunningChanged: { if (running) _buf = [] }
+            onExited: {
+                wpPickerOverlay._wallpapers = _buf.slice()
             }
         }
 
-        ColumnLayout {
-            anchors { fill: parent; margins: 16 }
-            spacing: 10
+        // ── Sidebar directory listing ─────────────────────────────────────
+        Process {
+            id: wpSidebarProc
+            property var    _buf:  []
+            property string _path: ""
+            command: _path ? [
+                "bash", "-c",
+                "find \"$1\" -maxdepth 1 -mindepth 1 -type d -not -name '.*' -print | sort",
+                "--", _path
+            ] : ["bash", "-c", "exit 0"]
+            stdout: SplitParser {
+                splitMarker: "\n"
+                onRead: function(line) {
+                    const t = line.trim()
+                    if (t) wpSidebarProc._buf.push(t)
+                }
+            }
+            onRunningChanged: if (running) _buf = []
+            onExited: { wpPickerOverlay._sidebarDirs = _buf.slice() }
+        }
 
-            // Header
-            RowLayout {
-                Layout.fillWidth: true
-                Text {
-                    text: "󰸉  Select Wallpaper / User Icon"
-                    color: Theme.cPrimary
-                    font.family: Config.labelFont; font.pixelSize: 15
-                    font.weight: Font.SemiBold
+        // ── Thumbnail generation process ─────────────────────────────────
+        Process {
+            id: wpThumbProc
+            property string _origPath: ""
+            property string _dst: ""
+            property string _cmd: "true"
+            command: ["bash", "-c", _cmd]
+            running: false
+            stdout: SplitParser {
+                splitMarker: "\n"
+                onRead: function(line) {
+                    if (line.trim() === "ok") {
+                        wpPickerOverlay._thumbReady(
+                            wpThumbProc._origPath,
+                            "file://" + wpThumbProc._dst + "?" + Date.now())
+                    }
                 }
-                Item { Layout.fillWidth: true }
-                Text {
-                    text: "Right-click a wallpaper to set as user icon"
-                    color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.5)
-                    font.family: Config.labelFont; font.pixelSize: 11
-                }
-                Item { width: 10 }
-                Rectangle {
-                    width: 28; height: 28; radius: 14
-                    color: wpCloseHov.containsMouse
-                        ? Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.15)
-                        : Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.07)
+            }
+            onExited: {
+                wpPickerOverlay._thumbRunning = false
+                wpPickerOverlay._thumbDrain()
+            }
+        }
+
+        // ── Layout: sidebar + content ─────────────────────────────────────
+        Row {
+            anchors.fill: parent
+            spacing: 0
+
+            // ── Left sidebar ──────────────────────────────────────────────
+            Rectangle {
+                id: wpSidebar
+                visible: wpPickerOverlay._sidebarOpen
+                width: visible ? 200 : 0
+                height: parent.height
+                radius: 20
+                color: Qt.rgba(Theme.cOnSecondary.r, Theme.cOnSecondary.g,
+                               Theme.cOnSecondary.b, 0.60)
+                clip: true
+                Behavior on width { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
+
+                ColumnLayout {
+                    anchors { fill: parent; margins: 8 }
+                    spacing: 4
+
+                    // Up button
+                    Rectangle {
+                        Layout.fillWidth: true; height: 32; radius: 8
+                        color: wpUpHov.containsMouse
+                            ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
+                                      Theme.cInversePrimary.b, 0.25)
+                            : "transparent"
+                        Row {
+                            anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
+                            spacing: 6
+                            Text { text: "󰁍"; font.family: Config.fontFamily; font.pixelSize: 14; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
+                            Text { text: "Up"; font.family: Config.labelFont; font.pixelSize: 12; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
+                        }
+                        MouseArea {
+                            id: wpUpHov; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: {
+                                const p = wpPickerOverlay._parentOf(wpPickerOverlay._sidebarPath)
+                                wpPickerOverlay._scanSidebarDirs(p)
+                            }
+                        }
+                        Behavior on color { ColorAnimation { duration: 100 } }
+                    }
+
+                    // Current path label
                     Text {
-                        anchors.centerIn: parent; text: "󰅙"
-                        font.family: Config.fontFamily; font.pixelSize: 15
-                        color: Theme.cPrimary
+                        Layout.fillWidth: true
+                        text: wpPickerOverlay._sidebarPath.split("/").pop() || "/"
+                        color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.55)
+                        font.family: Config.labelFont; font.pixelSize: 10
+                        elide: Text.ElideMiddle
+                        leftPadding: 8
                     }
-                    MouseArea {
-                        id: wpCloseHov; anchors.fill: parent; hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: wpPickerOverlay.close()
+
+                    // Separator
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.12) }
+
+                    // Directory list
+                    Flickable {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        contentWidth: width; contentHeight: wpDirCol.implicitHeight
+                        clip: true; boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {
+                            policy: ScrollBar.AsNeeded
+                            contentItem: Rectangle { implicitWidth: 3; radius: 1; color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2) }
+                            background: Rectangle { color: "transparent" }
+                        }
+
+                        Column {
+                            id: wpDirCol
+                            width: parent.width; spacing: 2
+
+                            Repeater {
+                                model: wpPickerOverlay._sidebarDirs
+                                delegate: Rectangle {
+                                    required property string modelData
+                                    required property int index
+                                    width: wpDirCol.width; height: 30; radius: 7
+                                    readonly property bool _isCurrent: wpPickerOverlay._currentDir === modelData
+                                    color: _isCurrent
+                                        ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
+                                                  Theme.cInversePrimary.b, 0.45)
+                                        : (wpDirMa.containsMouse
+                                            ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
+                                                      Theme.cInversePrimary.b, 0.18)
+                                            : "transparent")
+                                    Row {
+                                        anchors { left: parent.left; leftMargin: 8; verticalCenter: parent.verticalCenter }
+                                        spacing: 6
+                                        Text { text: "󰉋"; font.family: Config.fontFamily; font.pixelSize: 12; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
+                                        Text {
+                                            text: modelData.split("/").pop()
+                                            font.family: Config.labelFont; font.pixelSize: 11
+                                            color: Theme.cPrimary; elide: Text.ElideRight
+                                            width: wpDirCol.width - 40
+                                            anchors.verticalCenter: parent.verticalCenter
+                                        }
+                                    }
+                                    MouseArea {
+                                        id: wpDirMa; anchors.fill: parent; hoverEnabled: true
+                                        cursorShape: Qt.PointingHandCursor
+                                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                                        onClicked: function(mouse) {
+                                            if (mouse.button === Qt.RightButton) {
+                                                // Navigate into subdirectories
+                                                wpPickerOverlay._scanSidebarDirs(modelData)
+                                            } else {
+                                                wpPickerOverlay._selectDir(modelData)
+                                            }
+                                        }
+                                    }
+                                    Behavior on color { ColorAnimation { duration: 100 } }
+                                }
+                            }
+                        }
                     }
-                    Behavior on color { ColorAnimation { duration: 120 } }
                 }
             }
 
-            // Separator
-            Rectangle { Layout.fillWidth: true; height: 1; color: Qt.rgba(Theme.cOutVar.r, Theme.cOutVar.g, Theme.cOutVar.b, 0.25) }
+            // ── Right content ─────────────────────────────────────────────
+            ColumnLayout {
+                width: parent.width - (wpSidebar.visible ? wpSidebar.width : 0)
+                height: parent.height
+                spacing: 8
 
-            // Thumbnail grid
-            Flickable {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                contentWidth: width
-                contentHeight: wpGrid.implicitHeight + 12
-                clip: true
-                boundsBehavior: Flickable.StopAtBounds
-                // Invisible scrollbar
-                ScrollBar.vertical: ScrollBar {
-                    policy: ScrollBar.AsNeeded
-                    contentItem: Rectangle {
-                        implicitWidth: 0; radius: 0
-                        color: "transparent"
+                // Header
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16; Layout.rightMargin: 16; Layout.topMargin: 12
+                    Text {
+                        text: "󰀄  Select User Icon"
+                        color: Theme.cPrimary
+                        font.family: Config.labelFont; font.pixelSize: 15
+                        font.weight: Font.SemiBold
                     }
-                    background: Rectangle { color: "transparent" }
+                    Item { Layout.fillWidth: true }
+                    Text {
+                        text: "Click image to set as user icon"
+                        color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.5)
+                        font.family: Config.labelFont; font.pixelSize: 11
+                    }
+                    Item { width: 6 }
+                    // Sidebar toggle
+                    Rectangle {
+                        width: 28; height: 28; radius: 14
+                        color: wpSideTogHov.containsMouse
+                            ? Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.15)
+                            : Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.07)
+                        Text {
+                            anchors.centerIn: parent; text: "󰉋"
+                            font.family: Config.fontFamily; font.pixelSize: 14
+                            color: Theme.cPrimary
+                        }
+                        MouseArea {
+                            id: wpSideTogHov; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: wpPickerOverlay._sidebarOpen = !wpPickerOverlay._sidebarOpen
+                        }
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                    }
+                    // Close button
+                    Rectangle {
+                        width: 28; height: 28; radius: 14
+                        color: wpCloseHov.containsMouse
+                            ? Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.15)
+                            : Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.07)
+                        Text {
+                            anchors.centerIn: parent; text: "󰅙"
+                            font.family: Config.fontFamily; font.pixelSize: 15
+                            color: Theme.cPrimary
+                        }
+                        MouseArea {
+                            id: wpCloseHov; anchors.fill: parent; hoverEnabled: true
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: wpPickerOverlay.close()
+                        }
+                        Behavior on color { ColorAnimation { duration: 120 } }
+                    }
                 }
 
-                Grid {
-                    id: wpGrid
-                    width: parent.width
-                    columns: Math.max(2, Math.floor(parent.width / 160))
-                    spacing: 8
-                    anchors { left: parent.left; top: parent.top; topMargin: 6 }
+                // Separator
+                Rectangle {
+                    Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+                    height: 1; color: Qt.rgba(Theme.cOutVar.r, Theme.cOutVar.g, Theme.cOutVar.b, 0.25)
+                }
 
-                    Repeater {
-                        model: wpPickerOverlay._wallpapers
-                        delegate: Item {
-                            required property string modelData
-                            required property int index
-                            width:  (wpGrid.width - wpGrid.spacing * (wpGrid.columns - 1)) / wpGrid.columns
-                            height: width * 0.56
+                // Thumbnail grid
+                Flickable {
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    Layout.leftMargin: 16; Layout.rightMargin: 8
+                    contentWidth: width; contentHeight: wpGrid.implicitHeight + 12
+                    clip: true; boundsBehavior: Flickable.StopAtBounds
+                    ScrollBar.vertical: ScrollBar {
+                        policy: ScrollBar.AsNeeded
+                        contentItem: Rectangle { implicitWidth: 4; radius: 2; color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.18) }
+                        background: Rectangle { color: "transparent" }
+                    }
 
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: 10
-                                color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
-                                               Theme.cInversePrimary.b, 0.18)
-                                border.width: wpThumbHov.containsMouse ? 2 : 1
-                                border.color: wpThumbHov.containsMouse
-                                    ? Theme.cPrimary
-                                    : Qt.rgba(Theme.cOutVar.r, Theme.cOutVar.g, Theme.cOutVar.b, 0.28)
-                                clip: true
+                    Grid {
+                        id: wpGrid
+                        width: parent.width
+                        columns: Math.max(2, Math.floor(parent.width / 170))
+                        spacing: 8
+                        anchors { left: parent.left; top: parent.top; topMargin: 6 }
 
-                                Image {
+                        Repeater {
+                            model: wpPickerOverlay._wallpapers
+                            delegate: Item {
+                                id: wpThumbDel
+                                required property string modelData
+                                required property int index
+                                width:  (wpGrid.width - wpGrid.spacing * (wpGrid.columns - 1)) / wpGrid.columns
+                                height: width * 0.625
+
+                                property string _thumbSrc: ""
+
+                                Component.onCompleted: wpPickerOverlay._thumbRequest(modelData)
+
+                                Connections {
+                                    target: wpPickerOverlay
+                                    function on_ThumbReady(origPath, thumbSrc) {
+                                        if (origPath === wpThumbDel.modelData)
+                                            wpThumbDel._thumbSrc = thumbSrc
+                                    }
+                                }
+
+                                Rectangle {
                                     anchors.fill: parent
-                                    anchors.margins: 0
-                                    source: "file://" + parent.parent.modelData
-                                    fillMode: Image.PreserveAspectCrop
-                                    smooth: true; mipmap: true; asynchronous: true
+                                    radius: 12
+                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
+                                                   Theme.cInversePrimary.b, 0.18)
+                                    border.width: wpThumbHov.containsMouse ? 2 : 1
+                                    border.color: wpThumbHov.containsMouse
+                                        ? Theme.cPrimary
+                                        : Qt.rgba(Theme.cOutVar.r, Theme.cOutVar.g, Theme.cOutVar.b, 0.28)
+                                    clip: true
+
+                                    Image {
+                                        anchors.fill: parent; anchors.margins: 0
+                                        source: wpThumbDel._thumbSrc
+                                        fillMode: Image.PreserveAspectCrop
+                                        smooth: true; asynchronous: true
+                                        visible: wpThumbDel._thumbSrc !== ""
+                                    }
+
+                                    // Loading placeholder
+                                    Text {
+                                        anchors.centerIn: parent
+                                        visible: wpThumbDel._thumbSrc === ""
+                                        text: "󰋩"
+                                        font.family: Config.fontFamily; font.pixelSize: 24
+                                        color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.3)
+                                    }
+
+                                    // Filename label
+                                    Text {
+                                        anchors { bottom: parent.bottom; left: parent.left; right: parent.right; margins: 4 }
+                                        text: wpThumbDel.modelData.split("/").pop()
+                                        color: Qt.rgba(1, 1, 1, 0.85)
+                                        font.family: Config.labelFont; font.pixelSize: 9
+                                        elide: Text.ElideMiddle
+                                        horizontalAlignment: Text.AlignHCenter
+                                        style: Text.Outline; styleColor: Qt.rgba(0, 0, 0, 0.6)
+                                    }
+
+                                    Behavior on border.color { ColorAnimation { duration: 120 } }
                                 }
 
-                                // Loading placeholder
-                                Text {
-                                    anchors.centerIn: parent
-                                    visible: parent.children[1].status !== Image.Ready
-                                    text: "󰋩"
-                                    font.family: Config.fontFamily; font.pixelSize: 24
-                                    color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.3)
-                                }
-
-                                Behavior on border.color { ColorAnimation { duration: 120 } }
-                            }
-
-                            MouseArea {
-                                id: wpThumbHov
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                onClicked: function(mouse) {
-                                    if (mouse.button === Qt.LeftButton) {
-                                        // Apply as wallpaper
-                                        _wpApply.command = ["bash", "-c",
-                                            "exec \"${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/wallpaper/wallpaper-apply.sh\" \"" +
-                                            parent.modelData + "\""]
-                                        _wpApply.running = true
-                                        wpPickerOverlay.close()
-                                    } else {
-                                        // Show context menu
-                                        wpPickerOverlay._contextTarget = parent.modelData
-                                        const mapped = parent.mapToItem(wpPickerOverlay, mouse.x, mouse.y)
-                                        wpPickerOverlay._ctxX = mapped.x
-                                        wpPickerOverlay._ctxY = mapped.y
-                                        wpContextMenu.visible = true
+                                MouseArea {
+                                    id: wpThumbHov
+                                    anchors.fill: parent
+                                    hoverEnabled: true
+                                    cursorShape: Qt.PointingHandCursor
+                                    onClicked: {
+                                        // Single-click: set as user icon
+                                        _wpAsIcon.command = ["bash", "-c",
+                                            "f=\"" + wpThumbDel.modelData + "\" && " +
+                                            "magick \"$f\" -resize 96x96^ -gravity center -extent 96x96 " +
+                                            "  \\( +clone -alpha extract -fill black -colorize 100 " +
+                                            "     -fill white -draw 'circle 48,48 48,0' \\) " +
+                                            "  -alpha off -compose CopyOpacity -composite -strip " +
+                                            "  \"$HOME/.config/hyprcandy/user-icon.png\""]
+                                        _wpAsIcon.running = true
                                     }
                                 }
                             }
                         }
                     }
-                }
-            }
-        }
-
-        // ── Tray-style right-click context menu ──────────────────────────────
-        Rectangle {
-            id: wpContextMenu
-            visible: false
-            x: Math.min(wpPickerOverlay._ctxX, wpPickerOverlay.width  - width  - 8)
-            y: Math.min(wpPickerOverlay._ctxY, wpPickerOverlay.height - height - 8)
-            width: 200; height: ctxCol.implicitHeight + 12
-            z: 20
-            radius: 14
-            color: Qt.rgba(Theme.cOnSecondary.r, Theme.cOnSecondary.g,
-                           Theme.cOnSecondary.b, 0.98)
-            border.width: 1
-            border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g,
-                                  Theme.cPrimary.b, 0.25)
-
-            // Shadow effect via border glow
-            layer.enabled: true
-
-            // Click-away to close
-            MouseArea {
-                parent: wpPickerOverlay
-                anchors.fill: parent
-                z: 15
-                enabled: wpContextMenu.visible
-                onClicked: wpContextMenu.visible = false
-            }
-
-            Column {
-                id: ctxCol
-                anchors { left: parent.left; right: parent.right; top: parent.top; margins: 6 }
-                spacing: 0
-
-                // Context header
-                Text {
-                    leftPadding: 10; topPadding: 6; bottomPadding: 4
-                    text: "Wallpaper"
-                    color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.55)
-                    font.family: Config.labelFont; font.pixelSize: 11
-                }
-
-                // Separator
-                Rectangle {
-                    width: parent.width - 12; height: 1; x: 6
-                    color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.15)
-                }
-
-                // "Set as wallpaper" item
-                Rectangle {
-                    width: parent.width; height: 36; radius: 8
-                    color: ctxWpHov.containsMouse
-                        ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
-                                  Theme.cInversePrimary.b, 0.35)
-                        : "transparent"
-                    Row {
-                        anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-                        spacing: 8
-                        Text { text: "󰸉"; font.family: Config.fontFamily; font.pixelSize: 13; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
-                        Text { text: "Set as wallpaper"; font.family: Config.labelFont; font.pixelSize: 12; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    MouseArea {
-                        id: ctxWpHov; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            _wpApply.command = ["bash", "-c",
-                                "exec \"${XDG_CONFIG_HOME:-$HOME/.config}/quickshell/wallpaper/wallpaper-apply.sh\" \"" +
-                                wpPickerOverlay._contextTarget + "\""]
-                            _wpApply.running = true
-                            wpContextMenu.visible = false
-                            wpPickerOverlay.close()
-                        }
-                    }
-                    Behavior on color { ColorAnimation { duration: 100 } }
-                }
-
-                // "Set as user icon" item
-                Rectangle {
-                    width: parent.width; height: 36; radius: 8
-                    color: ctxIconHov.containsMouse
-                        ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
-                                  Theme.cInversePrimary.b, 0.35)
-                        : "transparent"
-                    Row {
-                        anchors { left: parent.left; leftMargin: 10; verticalCenter: parent.verticalCenter }
-                        spacing: 8
-                        Text { text: "󰀄"; font.family: Config.fontFamily; font.pixelSize: 13; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
-                        Text { text: "Set as user icon"; font.family: Config.labelFont; font.pixelSize: 12; color: Theme.cPrimary; anchors.verticalCenter: parent.verticalCenter }
-                    }
-                    MouseArea {
-                        id: ctxIconHov; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
-                        onClicked: {
-                            _wpAsIcon.command = ["bash", "-c",
-                                "f=\"" + wpPickerOverlay._contextTarget + "\" && " +
-                                "magick \"$f\" -resize 96x96^ -gravity center -extent 96x96 " +
-                                "  \\( +clone -alpha extract -fill black -colorize 100 " +
-                                "     -fill white -draw 'circle 48,48 48,0' \\) " +
-                                "  -alpha off -compose CopyOpacity -composite -strip " +
-                                "  \"$HOME/.config/hyprcandy/user-icon.png\""]
-                            _wpAsIcon.running = true
-                            wpContextMenu.visible = false
-                        }
-                    }
-                    Behavior on color { ColorAnimation { duration: 100 } }
                 }
             }
         }

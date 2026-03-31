@@ -336,6 +336,18 @@ PanelWindow {
         //
         // Internal module layout is unchanged: same Island pills inside each bar.
 
+        // ── Tri-island gap enforcement ──────────────────────────────────
+        //  Compute the available space between tri rects and shrink media
+        //  info text when the left or right rects approach the center rect.
+        //  triIslandGap (default 4 px) is always respected.
+        readonly property real _triScreenW: bar.width
+        readonly property real _triLeftEnd:   triLeft.x + triLeft.width
+        readonly property real _triCenterX:   triCenter.x
+        readonly property real _triCenterEnd: triCenter.x + triCenter.width
+        readonly property real _triRightX:    triRight.x
+        readonly property real _triLeftGap:   _triCenterX  - _triLeftEnd
+        readonly property real _triRightGap:  _triRightX   - _triCenterEnd
+
         // ── TRI LEFT BAR ──────────────────────────────────────────────────
         Rectangle {
             id: triLeft
@@ -346,9 +358,16 @@ PanelWindow {
                 verticalCenter: parent.verticalCenter
             }
             height:       Config.barHeight
-            implicitWidth: triLeftRow.implicitWidth
+            // Shrink width when approaching center rect (respect triIslandGap)
+            readonly property real _naturalW: triLeftRow.implicitWidth
                            + Config.barEdgePaddingLeft + Config.barEdgePaddingRight
                            + Config.islandSpacing * 2
+            readonly property real _maxW: {
+                if (!triCenter.visible) return _naturalW
+                const avail = triCenter.x - x - Config.triIslandGap
+                return avail > 0 ? Math.min(_naturalW, avail) : _naturalW
+            }
+            implicitWidth: _maxW
             radius:        Config.barRadius
             color:         Theme.blurBackground
             border.width:  Config.barBorderWidth
@@ -437,9 +456,16 @@ PanelWindow {
                 verticalCenter: parent.verticalCenter
             }
             height:       Config.barHeight
-            implicitWidth: triRightRow.implicitWidth
+            // Shrink width when approaching center rect (respect triIslandGap)
+            readonly property real _naturalW: triRightRow.implicitWidth
                            + Config.barEdgePaddingLeft + Config.barEdgePaddingRight
                            + Config.islandSpacing * 2
+            readonly property real _maxW: {
+                if (!triCenter.visible) return _naturalW
+                const avail = x - (triCenter.x + triCenter.width) - Config.triIslandGap
+                return avail > 0 ? Math.min(_naturalW, avail) : _naturalW
+            }
+            implicitWidth: _maxW
             radius:        Config.barRadius
             color:         Theme.blurBackground
             border.width:  Config.barBorderWidth
