@@ -77,6 +77,11 @@ QtObject {
     // ── Island spacing ────────────────────────────────────────────────────
     property int islandSpacing: 4   // px — gap between all top-level items
 
+    // ── Tri-island minimum gap ──────────────────────────────────────────
+    //  Minimum spacing between the three tri-mode rects (left / center / right).
+    //  The bar ensures at least this many pixels between adjacent rects.
+    property int triIslandGap: 4    // px — minimum gap between tri rects
+
     // ── Module spacing & padding ─────────────────────────────────────────
     //  THREE-TIER MODEL
     //  islandSpacing  → between top-level groups / standalone islands
@@ -273,6 +278,15 @@ QtObject {
         return cavaBars
     }
 
+    //  cavaAsciiSpacing — gap (in characters) between each bar in ASCII output.
+    //  Only applies when data_format = ascii. 0 = no gap (glyphs touching).
+    property int cavaAsciiSpacing: 0   // 0–4
+
+    //  cavaAutoHide — when true, cava auto-hides when no mpris player is detected.
+    //  The manual showCava toggle in Visibility overrides: showCava=false always hides,
+    //  showCava=true + cavaAutoHide=false always shows regardless of mpris.
+    property bool cavaAutoHide: true
+
     property bool cavaTransparentWhenInactive: true
     property real cavaActiveOpacity:   0.85
     property real cavaInactiveOpacity: 0.0
@@ -308,6 +322,9 @@ QtObject {
 
     property color cavaBgColor:   Theme.cOnSecondary
     property real  cavaBgOpacity: -1
+
+    property color distroBgColor:   Theme.cOnSecondary
+    property real  distroBgOpacity: -1
 
     property color activeWindowBgColor:   Theme.cOnSecondary
     property real  activeWindowBgOpacity: 0
