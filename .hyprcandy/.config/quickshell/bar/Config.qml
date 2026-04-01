@@ -77,11 +77,6 @@ QtObject {
     // ── Island spacing ────────────────────────────────────────────────────
     property int islandSpacing: 4   // px — gap between all top-level items
 
-    // ── Tri-island minimum gap ──────────────────────────────────────────
-    //  Minimum spacing between the three tri-mode rects (left / center / right).
-    //  The bar ensures at least this many pixels between adjacent rects.
-    property int triIslandGap: 4    // px — minimum gap between tri rects
-
     // ── Module spacing & padding ─────────────────────────────────────────
     //  THREE-TIER MODEL
     //  islandSpacing  → between top-level groups / standalone islands
@@ -252,7 +247,8 @@ QtObject {
     //  TAB 5 · Cava
     // ═══════════════════════════════════════════════════════════════════════
 
-    property int cavaWidth: 25   // display columns
+    property int cavaWidth: 25      // ASCII bar count (number of columns rendered by cava)
+    property real cavaBarSpacing: 0  // px — letter-spacing between bars (0 = no gap; fine increments)
 
     //  cavaStyle selects a named preset. Set to "" to use cavaBars directly.
     //  Presets:  "dots" | "bars" | "braille_fill" | "braille_hollow" |
@@ -278,18 +274,13 @@ QtObject {
         return cavaBars
     }
 
-    //  cavaAsciiSpacing — gap (in characters) between each bar in ASCII output.
-    //  Only applies when data_format = ascii. 0 = no gap (glyphs touching).
-    property int cavaAsciiSpacing: 0   // 0–4
-
-    //  cavaAutoHide — when true, cava auto-hides when no mpris player is detected.
-    //  The manual showCava toggle in Visibility overrides: showCava=false always hides,
-    //  showCava=true + cavaAutoHide=false always shows regardless of mpris.
-    property bool cavaAutoHide: true
-
     property bool cavaTransparentWhenInactive: true
     property real cavaActiveOpacity:   0.85
     property real cavaInactiveOpacity: 0.0
+    // cavaAutoHide: when true and showCava is enabled, cava auto-hides when no
+    //   media is detected and auto-shows when media starts playing.
+    //   When showCava is false, auto-hide is disabled and cava stays hidden.
+    property bool cavaAutoHide: false
 
     // ── Cava color ───────────────────────────────────────────────────────
     //  Single color: cavaGlyphColor
@@ -297,7 +288,12 @@ QtObject {
     property color cavaGlyphColor:          Theme.cPrimary
     property bool  cavaGradientEnabled:     false
     property color cavaGradientStartColor:  Theme.cPrimary
-    property color cavaGradientEndColor:    Theme.cSecondary
+    // Not bound to Theme.cSecondary so a user pick isn't snapped back by
+    // matugen re-evaluations.  Seeded once from the theme in onCompleted.
+    property color cavaGradientEndColor:    "#000000"
+    Component.onCompleted: cavaGradientEndColor = Theme.cSecondary
+    // Fraction of glyph height at which start→end color splits (0.0–1.0, default 0.5)
+    property real  cavaGradientSplit:       0.5
 
     // ═══════════════════════════════════════════════════════════════════════
     //  TAB 6 · Background
@@ -324,7 +320,7 @@ QtObject {
     property real  cavaBgOpacity: -1
 
     property color distroBgColor:   Theme.cOnSecondary
-    property real  distroBgOpacity: -1
+    property real  distroBgOpacity: -1   // -1 = global; independent distro/CC-button BG opacity
 
     property color activeWindowBgColor:   Theme.cOnSecondary
     property real  activeWindowBgOpacity: 0

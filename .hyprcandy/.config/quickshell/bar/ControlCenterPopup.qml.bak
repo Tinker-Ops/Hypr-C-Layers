@@ -37,8 +37,6 @@ PanelWindow {
     readonly property string _weatherLocFile: Quickshell.env("HOME") + "/.config/hyprcandy/weather-location.conf"
     property string _weatherPinnedName: ""   // display name of pinned location
     property bool   _weatherPinned:     false
-    property double _weatherPinnedLat:  0.0
-    property double _weatherPinnedLon:  0.0
 
     // ── Bar state (read from qs_bar_state.json, same as startmenu) ───────
     property bool   _barAtBottom: Config.barPosition === "bottom"
@@ -55,7 +53,7 @@ PanelWindow {
     property string _dockBorderWVal:    "2"
     property string _dockBorderRVal:    "20"
     property string _dockIconSizeVal:   "24"
-    property string _dockStartIconVal:  ""
+    property string _dockStartIconVal:  "󰫢"
 
     // ── Rofi current values ───────────────────────────────────────────────
     property string _rofiBorderVal:  "2"
@@ -66,16 +64,7 @@ PanelWindow {
     property string _sddmFormVal:    "center"
     property string _sddmBlurVal:    "55"
 
-    // ── Hyprland entry values ─────────────────────────────────────────────
-    property string _opacEntryVal:       "0.90"
-    property string _blurSizeEntryVal:   "2"
-    property string _blurPassesEntryVal: "4"
-    property string _gapsInnerEntryVal:  "6"
-    property string _gapsOuterEntryVal:  "12"
-    property string _borderWEntryVal:    "2"
-    property string _borderREntryVal:    "20"
-
-    // Load dock + rofi + sddm + hyprland values when CC opens
+    // Load dock + rofi + sddm values when CC opens
     Connections {
         target: ControlCenterState
         function onVisibleChanged() {
@@ -84,39 +73,7 @@ PanelWindow {
                 _rofiValReader.running = true
                 _sddmValReader.running = true
                 _weatherLocReader.running = true
-                _hyprlandValReader.running = true
             }
-        }
-    }
-
-    // Read hyprland config values
-    Process {
-        id: _hyprlandValReader
-        command: ["bash", "-c",
-            'f="$HOME/.config/hypr/hyprviz.conf"; ' +
-            'grep "active_opacity = " "$f" 2>/dev/null | head -1 | grep -oP "[0-9.]+"; ' +
-            'sed -n "/blur {/,/^}/p" "$f" 2>/dev/null | grep "size = " | head -1 | grep -oP "[0-9]+"; ' +
-            'sed -n "/blur {/,/^}/p" "$f" 2>/dev/null | grep "passes = " | head -1 | grep -oP "[0-9]+"; ' +
-            'grep "gaps_in = " "$f" 2>/dev/null | head -1 | grep -oP "[0-9]+"; ' +
-            'grep "gaps_out = " "$f" 2>/dev/null | head -1 | grep -oP "[0-9]+"; ' +
-            'grep "border_size = " "$f" 2>/dev/null | head -1 | grep -oP "[0-9]+"; ' +
-            'grep "rounding = " "$f" 2>/dev/null | head -1 | grep -oP "[0-9]+"']
-        running: false
-        property string _output: ""
-        stdout: SplitParser {
-            splitMarker: "\n"
-            onRead: function(l) { _hyprlandValReader._output += l.trim() + "\n" }
-        }
-        onExited: {
-            const lines = _hyprlandValReader._output.trim().split("\n")
-            _hyprlandValReader._output = ""
-            if (lines.length > 0 && lines[0]) _opacEntryVal = lines[0]
-            if (lines.length > 1 && lines[1]) _blurSizeEntryVal = lines[1]
-            if (lines.length > 2 && lines[2]) _blurPassesEntryVal = lines[2]
-            if (lines.length > 3 && lines[3]) _gapsInnerEntryVal = lines[3]
-            if (lines.length > 4 && lines[4]) _gapsOuterEntryVal = lines[4]
-            if (lines.length > 5 && lines[5]) _borderWEntryVal = lines[5]
-            if (lines.length > 6 && lines[6]) _borderREntryVal = lines[6]
         }
     }
     Process {
@@ -139,12 +96,12 @@ PanelWindow {
         onExited: {
             const ls = _lines
             _lines = []
-            _dockSpacingVal   = (ls[0] !== undefined && ls[0]) ? ls[0] : "0"
-            _dockPaddingVal   = (ls[1] !== undefined && ls[1]) ? ls[1] : "0"
+            _dockSpacingVal   = (ls[0] !== undefined && ls[0]) ? ls[0] : "5"
+            _dockPaddingVal   = (ls[1] !== undefined && ls[1]) ? ls[1] : "8"
             _dockBorderWVal   = (ls[2] !== undefined && ls[2]) ? ls[2] : "2"
-            _dockBorderRVal   = (ls[3] !== undefined && ls[3]) ? ls[3] : "20"
-            _dockIconSizeVal  = (ls[4] !== undefined && ls[4]) ? ls[4] : "24"
-            _dockStartIconVal = (ls[5] !== undefined && ls[5]) ? ls[5] : ""
+            _dockBorderRVal   = (ls[3] !== undefined && ls[3]) ? ls[3] : "12"
+            _dockIconSizeVal  = (ls[4] !== undefined && ls[4]) ? ls[4] : "32"
+            _dockStartIconVal = (ls[5] !== undefined && ls[5]) ? ls[5] : "󰫢"
         }
     }
     Process {
@@ -305,20 +262,6 @@ PanelWindow {
         }
     }
 
-    // ── Settings persistence for tab and weather location ───────────────────
-    Settings {
-        id: ccTabSettings
-        category: "cc-tabs-v1"
-        property int activeTab: 1  // Default to Hyprland tab (index 1)
-    }
-    Settings {
-        id: ccLocSettings
-        category: "cc-weather-loc-v1"
-        property string pinnedName: ""
-        property double pinnedLat: 0.0
-        property double pinnedLon: 0.0
-    }
-
     // ── The panel itself ───────────────────────────────────────────────────
     Rectangle {
         id: panel
@@ -343,16 +286,6 @@ PanelWindow {
 
         Keys.onEscapePressed: ControlCenterState.close()
         focus: true
-
-        Component.onCompleted: {
-            // Initialize weather pinned location from settings
-            if (ccLocSettings.pinnedName) {
-                ccWin._weatherPinned = true
-                ccWin._weatherPinnedName = ccLocSettings.pinnedName
-                ccWin._weatherPinnedLat = ccLocSettings.pinnedLat
-                ccWin._weatherPinnedLon = ccLocSettings.pinnedLon
-            }
-        }
 
         Connections {
             target: ControlCenterState
@@ -536,7 +469,6 @@ PanelWindow {
                                 onClicked: {
                                     mainStack.currentIndex = modelData.idx
                                     barSubStack.currentIndex = 0
-                                    ccTabSettings.activeTab = modelData.idx
                                 }
                             }
                             Behavior on color { ColorAnimation { duration: 150 } }
@@ -593,7 +525,7 @@ PanelWindow {
                 StackLayout {
                     id: mainStack
                     anchors.fill: parent
-                    currentIndex: ccTabSettings.activeTab
+                    currentIndex: 0
 
                     // ── TAB 0: Bar ──────────────────────────────────────────
                     Item {
@@ -698,12 +630,6 @@ PanelWindow {
                                                         _weatherLocSave.running = true
                                                         ccWin._weatherPinned = false
                                                         ccWin._weatherPinnedName = ""
-                                                        ccWin._weatherPinnedLat = 0.0
-                                                        ccWin._weatherPinnedLon = 0.0
-                                                        // Clear settings
-                                                        ccLocSettings.pinnedName = ""
-                                                        ccLocSettings.pinnedLat = 0.0
-                                                        ccLocSettings.pinnedLon = 0.0
                                                     }
                                                 }
                                             }
@@ -827,20 +753,16 @@ PanelWindow {
                                                         const lat  = (r.latitude  || 0).toFixed(4)
                                                         const lon  = (r.longitude || 0).toFixed(4)
                                                         const name = (r.name || "Location").replace(/'/g, "")
-                                                            + (r.admin1 ? ", " + r.admin1.replace(/'/g, "") : "")
+                                                            + (r.admin1 ? ", " + r.admin1 : "")
                                                         const content =
                                                             "LAT=" + lat + "\n" +
                                                             "LON=" + lon + "\n" +
-                                                            "NAME='" + name + "'\n"
+                                                            "NAME=" + name + "\n"
                                                         _weatherLocSave.command = ["bash", "-c",
                                                             'mkdir -p "$HOME/.config/hyprcandy" && ' +
                                                             "printf '%s' '" + content + "' > " +
                                                             '"$HOME/.config/hyprcandy/weather-location.conf"']
                                                         _weatherLocSave.running = true
-                                                        // Save to settings for persistence across CC launches
-                                                        ccLocSettings.pinnedName = name
-                                                        ccLocSettings.pinnedLat = parseFloat(lat)
-                                                        ccLocSettings.pinnedLon = parseFloat(lon)
                                                         ccWin._weatherGeoResults = []
                                                         _wLocInput.text = ""
                                                     }
@@ -1301,9 +1223,9 @@ PanelWindow {
                             }
                             Process { id: _opacToggleProc; running: false }
 
-                            // ── Opacity +/- buttons with direct entry ────────────
+                            // ── Opacity +/- buttons ───────────────────────────────
                             RowLayout {
-                                Layout.fillWidth: true; spacing: 6
+                                Layout.fillWidth: true; spacing: 8
                                 Text {
                                     text: "Opacity"
                                     color: Theme.cPrimary
@@ -1318,27 +1240,6 @@ PanelWindow {
                                         _opacDec.running = true
                                     }
                                 }
-                                // Direct value entry
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1
-                                    border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _opacEntryVal
-                                        color: Theme.cPrimary
-                                        font.family: Config.labelFont
-                                        font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: DoubleValidator { bottom: 0.0; top: 1.0; decimals: 2; notation: DoubleValidator.StandardNotation }
-                                        onAccepted: {
-                                            _opacSet.command = [scriptDir + "/hyprland-opacity-set.sh", text]
-                                            _opacSet.running = true
-                                            _opacEntryVal = text
-                                        }
-                                    }
-                                }
                                 CCPillBtn {
                                     text: "+"
                                     onClicked: {
@@ -1349,11 +1250,10 @@ PanelWindow {
                             }
                             Process { id: _opacDec; running: false; onExited: running = false }
                             Process { id: _opacInc; running: false; onExited: running = false }
-                            Process { id: _opacSet; running: false }
 
-                            // ── Blur Size +/- buttons with direct entry ──────────
+                            // ── Blur Size +/- buttons ─────────────────────────────
                             RowLayout {
-                                Layout.fillWidth: true; spacing: 6
+                                Layout.fillWidth: true; spacing: 8
                                 Text {
                                     text: "Blur Size"
                                     color: Theme.cPrimary
@@ -1368,27 +1268,6 @@ PanelWindow {
                                         _blurSizeDec.running = true
                                     }
                                 }
-                                // Direct value entry
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1
-                                    border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _blurSizeEntryVal
-                                        color: Theme.cPrimary
-                                        font.family: Config.labelFont
-                                        font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: IntValidator { bottom: 0; top: 50 }
-                                        onAccepted: {
-                                            _blurSizeSet.command = [scriptDir + "/hyprland-blur-size-set.sh", text]
-                                            _blurSizeSet.running = true
-                                            _blurSizeEntryVal = text
-                                        }
-                                    }
-                                }
                                 CCPillBtn {
                                     text: "+"
                                     onClicked: {
@@ -1399,11 +1278,10 @@ PanelWindow {
                             }
                             Process { id: _blurSizeDec; running: false; onExited: running = false }
                             Process { id: _blurSizeInc; running: false; onExited: running = false }
-                            Process { id: _blurSizeSet; running: false }
 
-                            // ── Blur Passes +/- buttons with direct entry ────────
+                            // ── Blur Passes +/- buttons ───────────────────────────
                             RowLayout {
-                                Layout.fillWidth: true; spacing: 6
+                                Layout.fillWidth: true; spacing: 8
                                 Text {
                                     text: "Blur Passes"
                                     color: Theme.cPrimary
@@ -1418,27 +1296,6 @@ PanelWindow {
                                         _blurPassesDec.running = true
                                     }
                                 }
-                                // Direct value entry
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1
-                                    border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _blurPassesEntryVal
-                                        color: Theme.cPrimary
-                                        font.family: Config.labelFont
-                                        font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: IntValidator { bottom: 0; top: 10 }
-                                        onAccepted: {
-                                            _blurPassesSet.command = [scriptDir + "/hyprland-blur-passes-set.sh", text]
-                                            _blurPassesSet.running = true
-                                            _blurPassesEntryVal = text
-                                        }
-                                    }
-                                }
                                 CCPillBtn {
                                     text: "+"
                                     onClicked: {
@@ -1449,112 +1306,6 @@ PanelWindow {
                             }
                             Process { id: _blurPassesDec; running: false; onExited: running = false }
                             Process { id: _blurPassesInc; running: false; onExited: running = false }
-                            Process { id: _blurPassesSet; running: false }
-
-                            // ── Gaps & Border ─────────────────────────────────────
-                            CCSection { text: "Gaps & Border" }
-
-                            // Inner Gaps
-                            RowLayout {
-                                Layout.fillWidth: true; spacing: 6
-                                Text {
-                                    text: "Inner Gaps"
-                                    color: Theme.cPrimary
-                                    font.family: Config.labelFont
-                                    font.pixelSize: 13
-                                    Layout.preferredWidth: 100
-                                }
-                                CCPillBtn { text: "−"; onClicked: { _gapsInnerDec.command=[scriptDir+"/hyprland-gaps-inner-set.sh","-1"]; _gapsInnerDec.running=true } }
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1; border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _gapsInnerEntryVal; color: Theme.cPrimary
-                                        font.family: Config.labelFont; font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: IntValidator { bottom: 0; top: 100 }
-                                        onAccepted: { _gapsInnerSet.command=[scriptDir+"/hyprland-gaps-inner-set.sh",text]; _gapsInnerSet.running=true; _gapsInnerEntryVal=text }
-                                    }
-                                }
-                                CCPillBtn { text: "+"; onClicked: { _gapsInnerInc.command=[scriptDir+"/hyprland-gaps-inner-set.sh","1"]; _gapsInnerInc.running=true } }
-                            }
-                            Process { id:_gapsInnerDec; running:false }
-                            Process { id:_gapsInnerInc; running:false }
-                            Process { id:_gapsInnerSet; running:false }
-
-                            // Outer Gaps
-                            RowLayout {
-                                Layout.fillWidth: true; spacing: 6
-                                Text { text: "Outer Gaps"; color: Theme.cPrimary; font.family: Config.labelFont; font.pixelSize: 13; Layout.preferredWidth: 100 }
-                                CCPillBtn { text: "−"; onClicked: { _gapsOuterDec.command=[scriptDir+"/hyprland-gaps-outer-set.sh","-1"]; _gapsOuterDec.running=true } }
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1; border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _gapsOuterEntryVal; color: Theme.cPrimary
-                                        font.family: Config.labelFont; font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: IntValidator { bottom: 0; top: 100 }
-                                        onAccepted: { _gapsOuterSet.command=[scriptDir+"/hyprland-gaps-outer-set.sh",text]; _gapsOuterSet.running=true; _gapsOuterEntryVal=text }
-                                    }
-                                }
-                                CCPillBtn { text: "+"; onClicked: { _gapsOuterInc.command=[scriptDir+"/hyprland-gaps-outer-set.sh","1"]; _gapsOuterInc.running=true } }
-                            }
-                            Process { id:_gapsOuterDec; running:false }
-                            Process { id:_gapsOuterInc; running:false }
-                            Process { id:_gapsOuterSet; running:false }
-
-                            // Border Width
-                            RowLayout {
-                                Layout.fillWidth: true; spacing: 6
-                                Text { text: "Border W"; color: Theme.cPrimary; font.family: Config.labelFont; font.pixelSize: 13; Layout.preferredWidth: 100 }
-                                CCPillBtn { text: "−"; onClicked: { _borderWDec.command=[scriptDir+"/hyprland-border-width-set.sh","-1"]; _borderWDec.running=true } }
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1; border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _borderWEntryVal; color: Theme.cPrimary
-                                        font.family: Config.labelFont; font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: IntValidator { bottom: 0; top: 20 }
-                                        onAccepted: { _borderWSet.command=[scriptDir+"/hyprland-border-width-set.sh",text]; _borderWSet.running=true; _borderWEntryVal=text }
-                                    }
-                                }
-                                CCPillBtn { text: "+"; onClicked: { _borderWInc.command=[scriptDir+"/hyprland-border-width-set.sh","1"]; _borderWInc.running=true } }
-                            }
-                            Process { id:_borderWDec; running:false }
-                            Process { id:_borderWInc; running:false }
-                            Process { id:_borderWSet; running:false }
-
-                            // Border Radius (Rounding)
-                            RowLayout {
-                                Layout.fillWidth: true; spacing: 6
-                                Text { text: "Border R"; color: Theme.cPrimary; font.family: Config.labelFont; font.pixelSize: 13; Layout.preferredWidth: 100 }
-                                CCPillBtn { text: "−"; onClicked: { _borderRDec.command=[scriptDir+"/hyprland-border-radius-set.sh","-1"]; _borderRDec.running=true } }
-                                Rectangle {
-                                    Layout.preferredWidth: 60; height: 28; radius: 7
-                                    color: Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g, Theme.cInversePrimary.b, 0.12)
-                                    border.width: 1; border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g, Theme.cPrimary.b, 0.2)
-                                    TextInput {
-                                        anchors { fill: parent; margins: 6 }
-                                        text: _borderREntryVal; color: Theme.cPrimary
-                                        font.family: Config.labelFont; font.pixelSize: 12
-                                        horizontalAlignment: Text.AlignHCenter
-                                        validator: IntValidator { bottom: 0; top: 50 }
-                                        onAccepted: { _borderRSet.command=[scriptDir+"/hyprland-border-radius-set.sh",text]; _borderRSet.running=true; _borderREntryVal=text }
-                                    }
-                                }
-                                CCPillBtn { text: "+"; onClicked: { _borderRInc.command=[scriptDir+"/hyprland-border-radius-set.sh","1"]; _borderRInc.running=true } }
-                            }
-                            Process { id:_borderRDec; running:false }
-                            Process { id:_borderRInc; running:false }
-                            Process { id:_borderRSet; running:false }
 
                             CCSection { text: "Gap Presets" }
                             Flow { Layout.fillWidth: true; spacing: 5

@@ -243,15 +243,19 @@ ShellRoot {
     property string mediaStatus:"Stopped"; property string mediaTitle:"No media"
     property string mediaArtist:""; property string mediaArtUrl:""
     property string _circularArtPath: ""
+    property string mediaShuffleStatus: "off"  // off, on  (lowercase)
+    property string mediaLoopStatus: "none"    // none, track, playlist  (lowercase)
+    property real   mediaPosition: 0           // seconds
+    property real   mediaDuration: 0           // seconds
 
     Process {
         id:mediaProc
-        command:["playerctl","-F","metadata","--format","{{status}}\t{{mpris:artUrl}}\t{{xesam:title}}\t{{xesam:artist}}"]
+        command:["playerctl","-F","metadata","--format","{{status}}\t{{mpris:artUrl}}\t{{xesam:title}}\t{{xesam:artist}}\t{{shuffle}}\t{{loop}}"]
         stdout: SplitParser {
             splitMarker:"\n"
             onRead: function(l){
                 const p=l.split("\t")
-                if(p.length>=4){
+                if(p.length>=6){
                     root.mediaStatus=p[0].trim()||"Stopped"
                     const newUrl=p[1].trim()
                     if(newUrl!==root.mediaArtUrl){
@@ -261,10 +265,94 @@ ShellRoot {
                     }
                     root.mediaTitle=p[2].trim()||"No media"
                     root.mediaArtist=p[3].trim()
+                    root.mediaShuffleStatus = (p[4].trim() || "off").toLowerCase()
+                    root.mediaLoopStatus    = (p[5].trim() || "none").toLowerCase()
                 }
             }
         }
         Component.onCompleted: running=true
+    }
+
+    // ── Media position/duration polling ──────────────────────────────────────
+    // Polls every second while Playing so the seek bar stays in sync.
+    Process {
+        id: posProc
+        property var _b: []
+        command: ["bash", "-c", "playerctl position; playerctl metadata mpris:length"]
+        stdout: SplitParser { splitMarker: "\n"; onRead: function(l){ posProc._b.push(l.trim()) } }
+        onRunningChanged: if(running) _b = []
+        onExited: function() {
+            if (_b.length >= 2) {
+                const pos = parseFloat(_b[0])
+                const dur = parseFloat(_b[1]) / 1000000.0  // µs → s
+                if (!isNaN(pos)) root.mediaPosition = pos
+                if (!isNaN(dur) && dur > 0) root.mediaDuration = dur
+            }
+            _b = []
+        }
+    }
+    Timer {
+        interval: 1000; repeat: true
+        running: root.mediaStatus === "Playing"
+        onTriggered: if (!posProc.running) posProc.running = true
+        Component.onCompleted: if (root.mediaStatus === "Playing") posProc.running = true
+    }
+
+    // Seek process
+    Process {
+        id: seekProc
+        property string _cmd: "true"
+        command: ["bash", "-c", seekProc._cmd]
+        function seek(secs) { _cmd = "playerctl position " + secs.toFixed(1); if(!running) running = true }
+    }
+
+    // Radial cava for lockscreen media — 64 bars ascii output
+    Process {
+        id:lockCavaProc
+        command: {
+            const bars = 64
+            const maxR = 7
+            const cfgPath = "/tmp/qs-lock-cava.ini"
+            const lines = [
+                "[general]",
+                "bars = " + bars,
+                "framerate = 60",
+                "",
+                "[output]",
+                "method = raw",
+                "raw_target = /dev/stdout",
+                "data_format = ascii",
+                "ascii_max_range = " + maxR,
+                "channels = mono"
+            ]
+            const quoted = lines.map(l => JSON.stringify(l)).join(" ")
+            const writeCmd = "printf '%s\\n' " + quoted + " > " + cfgPath
+            return ["bash", "-c", writeCmd + " && cava -p " + cfgPath]
+        }
+        running: false
+        stdout: SplitParser {
+            splitMarker: "\n"
+            onRead: function(line) {
+                const t = line.trim()
+                if (!t || t.startsWith("[")) return
+                if (radialCava && radialCava.visible) radialCava.updateBars(t)
+            }
+        }
+        onExited: restartTimer.restart()
+    }
+    Timer { id:restartTimer; interval:2000; repeat:false
+        onTriggered: if(!lockCavaProc.running) lockCavaProc.running=true }
+
+    // Start/stop cava based on media status
+    Connections {
+        target: root
+        function onMediaStatusChanged() {
+            if (root.mediaStatus === "Playing" && !lockCavaProc.running) {
+                lockCavaProc.running = true
+            } else if (root.mediaStatus !== "Playing") {
+                lockCavaProc.running = false
+            }
+        }
     }
 
     // ImageMagick: art → 192px circle PNG
@@ -320,7 +408,23 @@ ShellRoot {
     }
 
     Process { id:ctlProc; property string _cmd:""; command:["bash","-c",ctlProc._cmd] }
-    function playerAction(cmd){ ctlProc._cmd="playerctl "+cmd; if(!ctlProc.running) ctlProc.running=true }
+    function playerAction(cmd){
+        let c
+        if (cmd === "shuffle") {
+            c = "playerctl shuffle toggle"
+        } else if (cmd === "loop") {
+            // Cycle: none → track → playlist → none
+            const loopOrder = ["none","track","playlist"]
+            const loopCmds  = ["None","Track","Playlist"]
+            const curIdx    = Math.max(0, loopOrder.indexOf(root.mediaLoopStatus.toLowerCase()))
+            const nextIdx   = (curIdx + 1) % 3
+            c = "playerctl loop " + loopCmds[nextIdx]
+        } else {
+            c = "playerctl " + cmd
+        }
+        ctlProc._cmd = c
+        if(!ctlProc.running) ctlProc.running=true
+    }
 
     // ── Session lock ──────────────────────────────────────────────────────────
     WlSessionLock { id:sessionLock; locked:true
@@ -603,17 +707,71 @@ ShellRoot {
                                     anchors { left:parent.left; right:parent.right; top:parent.top; margins:18 }
                                     spacing:8
 
-                                    // Album disc
+                    // Album disc with radial cava
                                     Item {
                                         Layout.alignment:Qt.AlignHCenter
-                                        width:96; height:96
+                                        width:160; height:160
 
-                                        Rectangle { anchors.fill:parent; radius:48; color:root.cSurfHi }
+                                        // Radial cava canvas — 64 bars around the art circle
+                                        Canvas {
+                                            id:radialCava
+                                            anchors.fill:parent
+                                            visible: root.mediaStatus==="Playing"
+                                            property var _bars: []
+                                            property int _barCount: 64
+
+                                            function updateBars(text) {
+                                                if (!text) return
+                                                const vals = text.split(";")
+                                                _bars = []
+                                                for (let i = 0; i < _barCount; i++) {
+                                                    const v = parseInt(vals[i % vals.length])
+                                                    _bars.push(isNaN(v) ? 0 : v / 7.0)
+                                                }
+                                                requestPaint()
+                                            }
+
+                                            onPaint: {
+                                                const ctx = getContext("2d")
+                                                ctx.reset()
+                                                const cx = width / 2, cy = height / 2
+                                                const innerR = 56   // just outside 112/2 art radius
+                                                const maxBarH = 22  // max bar length in px
+
+                                                for (let i = 0; i < _barCount; i++) {
+                                                    const angle = (i / _barCount) * Math.PI * 2 - Math.PI / 2
+                                                    const barH  = (_bars[i] || 0) * maxBarH
+
+                                                    ctx.beginPath()
+                                                    ctx.strokeStyle = Qt.rgba(root.cPrimary.r, root.cPrimary.g, root.cPrimary.b, 0.75)
+                                                    ctx.lineWidth = 2.5
+                                                    ctx.lineCap   = "round"
+
+                                                    const x1 = cx + Math.cos(angle) * innerR
+                                                    const y1 = cy + Math.sin(angle) * innerR
+                                                    const x2 = cx + Math.cos(angle) * (innerR + barH)
+                                                    const y2 = cy + Math.sin(angle) * (innerR + barH)
+
+                                                    ctx.moveTo(x1, y1)
+                                                    ctx.lineTo(x2, y2)
+                                                    ctx.stroke()
+                                                }
+                                            }
+                                        }
+
+                                        Rectangle {
+                                            anchors.fill:parent
+                                            anchors.margins: 24
+                                            radius: (width / 2)
+                                            color:root.cSurfHi
+                                            clip: true
+                                        }
 
                                         // Pre-processed circular art
                                         Image {
                                             id:artImg
                                             anchors.fill:parent
+                                            anchors.margins: 24
                                             source: root._circularArtPath!==""
                                                 ? ("file://" + root._circularArtPath.split("?")[0] + "?v=" + root._circularArtPath.split("?")[1])
                                                 : ""
@@ -622,19 +780,24 @@ ShellRoot {
                                             visible:root._circularArtPath!==""&&status===Image.Ready
                                         }
                                         Text {
-                                            anchors.centerIn:parent; visible:!artImg.visible
+                                            anchors.centerIn:parent
+                                            anchors.margins: 24
+                                            visible:!artImg.visible
                                             text:"󰽲"
                                             font.pixelSize:40; font.family:"Symbols Nerd Font Mono"
                                             color:root.cOnSurfVar; opacity:0.35
                                         }
 
-                                        // Smooth rotation — ~22fps feel via short duration
-                                        // Spindle removed; image itself rotates
-                                        RotationAnimator on rotation {
-                                            from:0; to:360
-                                            duration:100000
-                                            loops:Animation.Infinite
-                                            running:root.mediaStatus==="Playing"
+                                        // Smooth rotation applied to a child Item so canvas stays fixed
+                                        Item {
+                                            anchors.fill: parent
+                                            anchors.margins: 24
+                                            RotationAnimator on rotation {
+                                                from:0; to:360
+                                                duration:100000
+                                                loops:Animation.Infinite
+                                                running:root.mediaStatus==="Playing"
+                                            }
                                         }
                                     }
 
@@ -651,35 +814,152 @@ ShellRoot {
                                         elide:Text.ElideRight; visible:text!==""
                                     }
 
-                                    // Controls
+                                    // ── Progress / seek bar ──────────────────────────────
+                                    Item {
+                                        Layout.fillWidth: true
+                                        height: 28
+                                        visible: root.mediaDuration > 0
+
+                                        property bool  _drag:      false
+                                        property real  _dragNorm:  0
+                                        readonly property real _norm: root.mediaDuration > 0
+                                            ? (_drag ? _dragNorm
+                                                     : Math.max(0, Math.min(1, root.mediaPosition / root.mediaDuration)))
+                                            : 0
+
+                                        function _fmtTime(s) {
+                                            const m = Math.floor(s / 60)
+                                            const ss = Math.floor(s % 60)
+                                            return m + ":" + (ss < 10 ? "0" : "") + ss
+                                        }
+
+                                        // Time labels
+                                        Text {
+                                            anchors.left: parent.left; anchors.top: parent.top
+                                            text: parent._fmtTime(parent._drag
+                                                ? parent._dragNorm * root.mediaDuration
+                                                : root.mediaPosition)
+                                            color: root.cOnSurfVar; font.pixelSize: 9
+                                        }
+                                        Text {
+                                            anchors.right: parent.right; anchors.top: parent.top
+                                            text: parent._fmtTime(root.mediaDuration)
+                                            color: root.cOnSurfVar; font.pixelSize: 9
+                                        }
+
+                                        // Trough
+                                        Item {
+                                            anchors.bottom: parent.bottom
+                                            anchors.left: parent.left; anchors.right: parent.right
+                                            height: 14
+
+                                            // Track background
+                                            Rectangle {
+                                                anchors.fill: parent; radius: 7
+                                                color: Qt.rgba(root.cOutVar.r, root.cOutVar.g, root.cOutVar.b, 0.28)
+                                                border.width: 1
+                                                border.color: Qt.rgba(root.cPrimary.r, root.cPrimary.g, root.cPrimary.b, 0.45)
+                                            }
+
+                                            // Filled portion with gradient
+                                            Item {
+                                                x: 3; y: 3
+                                                width:  Math.max(0, (parent.width - 6) * parent.parent.parent._norm)
+                                                height: 8
+                                                clip: true
+                                                Rectangle {
+                                                    width:  parent.parent.width - 6
+                                                    height: 8
+                                                    radius: 4
+                                                    gradient: Gradient {
+                                                        orientation: Gradient.Horizontal
+                                                        GradientStop { position: 0.0; color: root.cInvPrimary }
+                                                        GradientStop { position: 1.0; color: root.cPrimary }
+                                                    }
+                                                }
+                                            }
+
+                                            // Thumb glyph (matches CCSlider)
+                                            Text {
+                                                text: "󰟃"
+                                                font.family: "Symbols Nerd Font Mono"; font.pixelSize: 10
+                                                color: root.cPrimary
+                                                style: Text.Outline; styleColor: Qt.rgba(0,0,0,0.25)
+                                                x: {
+                                                    const tw = parent.width - 6
+                                                    const cx = 3 + tw * parent.parent.parent._norm - implicitWidth / 2
+                                                    return Math.max(1, Math.min(parent.width - implicitWidth - 1, cx))
+                                                }
+                                                y: (parent.height - implicitHeight) / 2
+                                            }
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                                                preventStealing: true
+                                                function _normAt(mx) { return Math.max(0, Math.min(1, mx / width)) }
+                                                onPressed: function(m) {
+                                                    parent.parent._drag = true
+                                                    parent.parent._dragNorm = _normAt(m.x)
+                                                }
+                                                onPositionChanged: function(m) {
+                                                    if (pressed) parent.parent._dragNorm = _normAt(m.x)
+                                                }
+                                                onReleased: function(m) {
+                                                    const n = _normAt(m.x)
+                                                    parent.parent._dragNorm = n
+                                                    parent.parent._drag = false
+                                                    seekProc.seek(n * root.mediaDuration)
+                                                }
+                                                onWheel: function(e) {
+                                                    const delta = (e.angleDelta.y > 0 ? 1 : -1) * 5
+                                                    seekProc.seek(Math.max(0, Math.min(root.mediaDuration, root.mediaPosition + delta)))
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Controls — 5 buttons: shuffle, prev, play/pause, next, loop
                                     RowLayout {
-                                        Layout.alignment:Qt.AlignHCenter; spacing:10
+                                        Layout.alignment:Qt.AlignHCenter; spacing:8
                                         Repeater {
                                             model:[
-                                                {i:"󰒮",c:"previous"},
-                                                {i:root.mediaStatus==="Playing"?"󰏤":"󰐊",c:"play-pause"},
-                                                {i:"󰒭",c:"next"}
+                                                // Shuffle: 󰒞 always; active = shuffling on
+                                                {i:"󰒞", c:"shuffle", a:root.mediaShuffleStatus==="on"},
+                                                {i:"󰒮", c:"previous", a:false},
+                                                {i:root.mediaStatus==="Playing"?"󰏤":"󰐊", c:"play-pause", a:false},
+                                                {i:"󰒭", c:"next", a:false},
+                                                // Loop: none→󰑗  track→󰑘  playlist→󰑖  (matches media.js)
+                                                {i:root.mediaLoopStatus==="track"?"󰑘":(root.mediaLoopStatus==="playlist"?"󰑖":"󰑗"),
+                                                 c:"loop", a:root.mediaLoopStatus!=="none"}
                                             ]
                                             delegate: Rectangle {
                                                 required property var modelData
                                                 required property int index
-                                                width:34; height:34; radius:6
-                                                readonly property bool isPlay: index===1
+                                                width:32; height:32; radius:6
+                                                readonly property bool isCenter: index===2
+                                                readonly property bool isActive: modelData.a
                                                 color: mha.containsMouse
-                                                    ? (isPlay
-                                                        ? Qt.rgba(root.cOnSurf.r,root.cOnSurf.g,root.cOnSurf.b,0.22)
-                                                        : Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.18))
-                                                    : "transparent"
-                                                border.width:1
-                                                border.color: isPlay
-                                                    ? Qt.rgba(root.cOnSurf.r,root.cOnSurf.g,root.cOnSurf.b,0.65)
-                                                    : Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.50)
+                                                    ? (isActive
+                                                        ? Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.25)
+                                                        : (isCenter
+                                                            ? Qt.rgba(root.cOnSurf.r,root.cOnSurf.g,root.cOnSurf.b,0.22)
+                                                            : Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.18)))
+                                                    : (isActive
+                                                        ? Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.15)
+                                                        : "transparent")
+                                                border.width:isActive?2:1
+                                                border.color: isActive
+                                                    ? root.cPrimary
+                                                    : (isCenter
+                                                        ? Qt.rgba(root.cOnSurf.r,root.cOnSurf.g,root.cOnSurf.b,0.65)
+                                                        : Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.50))
                                                 Behavior on color { ColorAnimation{duration:100} }
                                                 Text {
                                                     anchors.centerIn:parent
-                                                    text:modelData.i; font.pixelSize:16; font.family:"Symbols Nerd Font Mono"
-                                                    color: mha.containsMouse
-                                                        ? (parent.isPlay ? root.cOnSurf : root.cPrimary)
+                                                    text:modelData.i; font.pixelSize:15; font.family:"Symbols Nerd Font Mono"
+                                                    color: mha.containsMouse || parent.isActive
+                                                        ? (isCenter ? root.cOnSurf : root.cPrimary)
                                                         : root.cOnSurfVar
                                                     Behavior on color { ColorAnimation{duration:100} }
                                                 }
