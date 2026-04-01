@@ -123,8 +123,102 @@ PanelWindow {
         Connections {
             target: ControlCenterState
             function onVisibleChanged() {
-                if (ControlCenterState.visible) panel.forceActiveFocus()
+                if (ControlCenterState.visible) {
+                    panel.forceActiveFocus()
+                    // Refresh Hyprland config values on CC open
+                    _hyprReadOpacity.running  = true
+                    _hyprReadBlurSz.running   = true
+                    _hyprReadBlurP.running    = true
+                    _hyprReadGapsOut.running  = true
+                    _hyprReadGapsIn.running   = true
+                    _hyprReadBorder.running   = true
+                    _hyprReadRounding.running = true
+                    // Refresh dock config values on CC open
+                    _dockReadConf.running = true
+                }
             }
+        }
+
+        // ── Live Hyprland config values ────────────────────────────────────
+        property string _hyprOpacity:  "—"
+        property string _hyprBlurSz:   "—"
+        property string _hyprBlurP:    "—"
+        property string _hyprGapsOut:  "—"
+        property string _hyprGapsIn:   "—"
+        property string _hyprBorder:   "—"
+        property string _hyprRounding: "—"
+
+        Process {
+            id: _hyprReadOpacity
+            command: ["bash","-c","grep 'active_opacity' \"$HOME/.config/hypr/hyprviz.conf\" | grep -oP '[0-9.]+'"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprOpacity = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadBlurSz
+            command: ["bash","-c","sed -n '/blur {/,/}/{ s/.*size = \\([0-9]*\\).*/\\1/p }' \"$HOME/.config/hypr/hyprviz.conf\""]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprBlurSz = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadBlurP
+            command: ["bash","-c","grep 'passes = ' \"$HOME/.config/hypr/hyprviz.conf\" | grep -oP '[0-9]+'"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprBlurP = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadGapsOut
+            command: ["bash","-c","grep 'gaps_out' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprGapsOut = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadGapsIn
+            command: ["bash","-c","grep 'gaps_in' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprGapsIn = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadBorder
+            command: ["bash","-c","grep 'border_size' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprBorder = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadRounding
+            command: ["bash","-c","grep 'rounding' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprRounding = l.trim() } }
+            running: false
+        }
+
+        // ── Dock config values ────────────────────────────────────────────
+        property string _dockSpacing:  ""
+        property string _dockPadding:  ""
+        property string _dockBorderW:  ""
+        property string _dockBorderR:  ""
+        property string _dockIconSize: ""
+
+        Process {
+            id: _dockReadConf
+            property var _buf: []
+            command: ["bash","-c",
+                "f=\"$HOME/.hyprcandy/GJS/hyprcandydock/config.js\"; " +
+                "[ -f \"$f\" ] && grep -oP '(buttonSpacing|innerPadding|borderWidth|borderRadius|appIconSize):\\s*[0-9]+' \"$f\""]
+            stdout: SplitParser {
+                splitMarker: "\n"
+                onRead: function(l) {
+                    const m = l.match(/(\\w+):\\s*(\\d+)/)
+                    if (!m) return
+                    switch (m[1]) {
+                        case "buttonSpacing": panel._dockSpacing = m[2]; break
+                        case "innerPadding":  panel._dockPadding = m[2]; break
+                        case "borderWidth":   panel._dockBorderW = m[2]; break
+                        case "borderRadius":  panel._dockBorderR = m[2]; break
+                        case "appIconSize":   panel._dockIconSize = m[2]; break
+                    }
+                }
+            }
+            running: false
         }
 
         Row {
@@ -717,27 +811,68 @@ PanelWindow {
 
                             RowLayout { Layout.fillWidth:true; spacing:8
                                 Text { text:"Opacity"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprOpacity; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
                                 CCPillBtn { text:"−"; onClicked:_opacDec.running=true }
                                 CCPillBtn { text:"+"; onClicked:_opacInc.running=true }
                             }
-                            Process { id:_opacDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'active_opacity' \"$f\" | grep -oP '[0-9.]+'); nv=$(echo \"$v - 0.05\" | bc); [ $(echo \"$nv >= 0\" | bc) -eq 1 ] && sed -i \"s/active_opacity = .*/active_opacity = $nv/\" \"$f\" && sed -i \"s/inactive_opacity = .*/inactive_opacity = $nv/\" \"$f\" && hyprctl reload"]; running:false }
-                            Process { id:_opacInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'active_opacity' \"$f\" | grep -oP '[0-9.]+'); nv=$(echo \"$v + 0.05\" | bc); [ $(echo \"$nv <= 1\" | bc) -eq 1 ] && sed -i \"s/active_opacity = .*/active_opacity = $nv/\" \"$f\" && sed -i \"s/inactive_opacity = .*/inactive_opacity = $nv/\" \"$f\" && hyprctl reload"]; running:false }
+                            Process { id:_opacDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'active_opacity' \"$f\" | grep -oP '[0-9.]+'); nv=$(echo \"$v - 0.05\" | bc); [ $(echo \"$nv >= 0\" | bc) -eq 1 ] && sed -i \"s/active_opacity = .*/active_opacity = $nv/\" \"$f\" && sed -i \"s/inactive_opacity = .*/inactive_opacity = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadOpacity.running=true }
+                            Process { id:_opacInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'active_opacity' \"$f\" | grep -oP '[0-9.]+'); nv=$(echo \"$v + 0.05\" | bc); [ $(echo \"$nv <= 1\" | bc) -eq 1 ] && sed -i \"s/active_opacity = .*/active_opacity = $nv/\" \"$f\" && sed -i \"s/inactive_opacity = .*/inactive_opacity = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadOpacity.running=true }
 
                             RowLayout { Layout.fillWidth:true; spacing:8
                                 Text { text:"Blur Size"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprBlurSz; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
                                 CCPillBtn { text:"−"; onClicked:_blurSzDec.running=true }
                                 CCPillBtn { text:"+"; onClicked:_blurSzInc.running=true }
                             }
-                            Process { id:_blurSzDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(sed -n '/blur {/,/}/{ s/.*size = \\([0-9]*\\).*/\\1/p }' \"$f\"); nv=$((v > 0 ? v - 1 : 0)); sed -i \"/blur {/,/}/{s/size = $v/size = $nv/}\" \"$f\" && hyprctl reload"]; running:false }
-                            Process { id:_blurSzInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(sed -n '/blur {/,/}/{ s/.*size = \\([0-9]*\\).*/\\1/p }' \"$f\"); nv=$((v + 1)); sed -i \"/blur {/,/}/{s/size = $v/size = $nv/}\" \"$f\" && hyprctl reload"]; running:false }
+                            Process { id:_blurSzDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(sed -n '/blur {/,/}/{ s/.*size = \\([0-9]*\\).*/\\1/p }' \"$f\"); nv=$((v > 0 ? v - 1 : 0)); sed -i \"/blur {/,/}/{s/size = $v/size = $nv/}\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadBlurSz.running=true }
+                            Process { id:_blurSzInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(sed -n '/blur {/,/}/{ s/.*size = \\([0-9]*\\).*/\\1/p }' \"$f\"); nv=$((v + 1)); sed -i \"/blur {/,/}/{s/size = $v/size = $nv/}\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadBlurSz.running=true }
 
                             RowLayout { Layout.fillWidth:true; spacing:8
                                 Text { text:"Blur Passes"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprBlurP; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
                                 CCPillBtn { text:"−"; onClicked:_blurPDec.running=true }
                                 CCPillBtn { text:"+"; onClicked:_blurPInc.running=true }
                             }
-                            Process { id:_blurPDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'passes = ' \"$f\" | grep -oP '[0-9]+'); nv=$((v > 0 ? v - 1 : 0)); sed -i \"s/passes = $v/passes = $nv/\" \"$f\" && hyprctl reload"]; running:false }
-                            Process { id:_blurPInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'passes = ' \"$f\" | grep -oP '[0-9]+'); nv=$((v + 1)); sed -i \"s/passes = $v/passes = $nv/\" \"$f\" && hyprctl reload"]; running:false }
+                            Process { id:_blurPDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'passes = ' \"$f\" | grep -oP '[0-9]+'); nv=$((v > 0 ? v - 1 : 0)); sed -i \"s/passes = $v/passes = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadBlurP.running=true }
+                            Process { id:_blurPInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprviz.conf\"; v=$(grep 'passes = ' \"$f\" | grep -oP '[0-9]+'); nv=$((v + 1)); sed -i \"s/passes = $v/passes = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadBlurP.running=true }
+
+                            CCSection { text:"Borders & Rounding" }
+                            RowLayout { Layout.fillWidth:true; spacing:8
+                                Text { text:"Border Size"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprBorder; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
+                                CCPillBtn { text:"−"; onClicked:_borderDec.running=true }
+                                CCPillBtn { text:"+"; onClicked:_borderInc.running=true }
+                            }
+                            Process { id:_borderDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'border_size' \"$f\" | grep -oP '[0-9]+'); nv=$((v > 0 ? v - 1 : 0)); sed -i \"s/border_size = $v/border_size = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadBorder.running=true }
+                            Process { id:_borderInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'border_size' \"$f\" | grep -oP '[0-9]+'); nv=$((v + 1)); sed -i \"s/border_size = $v/border_size = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadBorder.running=true }
+
+                            RowLayout { Layout.fillWidth:true; spacing:8
+                                Text { text:"Rounding"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprRounding; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
+                                CCPillBtn { text:"−"; onClicked:_roundDec.running=true }
+                                CCPillBtn { text:"+"; onClicked:_roundInc.running=true }
+                            }
+                            Process { id:_roundDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'rounding' \"$f\" | grep -oP '[0-9]+'); nv=$((v > 0 ? v - 1 : 0)); sed -i \"s/rounding = $v/rounding = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadRounding.running=true }
+                            Process { id:_roundInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'rounding' \"$f\" | grep -oP '[0-9]+'); nv=$((v + 1)); sed -i \"s/rounding = $v/rounding = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadRounding.running=true }
+
+                            CCSection { text:"Gaps" }
+                            RowLayout { Layout.fillWidth:true; spacing:8
+                                Text { text:"Gaps Out"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprGapsOut; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
+                                CCPillBtn { text:"−"; onClicked:_gapOutDec.running=true }
+                                CCPillBtn { text:"+"; onClicked:_gapOutInc.running=true }
+                            }
+                            Process { id:_gapOutDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'gaps_out' \"$f\" | grep -oP '[0-9]+' | head -1); nv=$((v > 0 ? v - 1 : 0)); sed -i \"s/gaps_out = $v/gaps_out = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadGapsOut.running=true }
+                            Process { id:_gapOutInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'gaps_out' \"$f\" | grep -oP '[0-9]+' | head -1); nv=$((v + 1)); sed -i \"s/gaps_out = $v/gaps_out = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadGapsOut.running=true }
+
+                            RowLayout { Layout.fillWidth:true; spacing:8
+                                Text { text:"Gaps In"; color:Theme.cPrimary; font.family:Config.labelFont; font.pixelSize:13; Layout.preferredWidth:100 }
+                                Text { text:panel._hyprGapsIn; color:Qt.rgba(Theme.cPrimary.r,Theme.cPrimary.g,Theme.cPrimary.b,0.7); font.family:Config.labelFont; font.pixelSize:12; Layout.preferredWidth:40; horizontalAlignment:Text.AlignRight }
+                                CCPillBtn { text:"−"; onClicked:_gapInDec.running=true }
+                                CCPillBtn { text:"+"; onClicked:_gapInInc.running=true }
+                            }
+                            Process { id:_gapInDec; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'gaps_in' \"$f\" | grep -oP '[0-9]+' | head -1); nv=$((v > 0 ? v - 1 : 0)); sed -i \"s/gaps_in = $v/gaps_in = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadGapsIn.running=true }
+                            Process { id:_gapInInc; command:["bash","-c","f=\"$HOME/.config/hypr/hyprlayout.conf\"; v=$(grep 'gaps_in' \"$f\" | grep -oP '[0-9]+' | head -1); nv=$((v + 1)); sed -i \"s/gaps_in = $v/gaps_in = $nv/\" \"$f\" && hyprctl reload"]; running:false; onExited:_hyprReadGapsIn.running=true }
 
                             CCSection { text:"Gap Presets" }
                             Flow { Layout.fillWidth:true; spacing:5
@@ -750,7 +885,7 @@ PanelWindow {
                                     }
                                 }
                             }
-                            Process { id:_gapProc; running:false }
+                            Process { id:_gapProc; running:false; onExited:{ _hyprReadGapsOut.running=true; _hyprReadGapsIn.running=true; _hyprReadBorder.running=true; _hyprReadRounding.running=true } }
                             Item { height:10 }
                         }
                     }

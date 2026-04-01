@@ -243,6 +243,12 @@ ShellRoot {
     property string mediaStatus:"Stopped"; property string mediaTitle:"No media"
     property string mediaArtist:""; property string mediaArtUrl:""
     property string _circularArtPath: ""
+    // Position tracking (microseconds from playerctl → seconds)
+    property real mediaPosition: 0
+    property real mediaLength:   0
+    // Shuffle / loop state
+    property string shuffleStatus: "Off"   // "Off" | "On"
+    property string loopStatus:    "None"  // "None" | "Track" | "Playlist"
 
     Process {
         id:mediaProc
@@ -265,6 +271,65 @@ ShellRoot {
             }
         }
         Component.onCompleted: running=true
+    }
+
+    // Poll position, length, shuffle, loop every 1s
+    Process {
+        id:posProc
+        command:["bash","-c",
+            "pos=$(playerctl position 2>/dev/null || echo 0); " +
+            "len=$(playerctl metadata mpris:length 2>/dev/null || echo 0); " +
+            "shuf=$(playerctl shuffle 2>/dev/null || echo Off); " +
+            "loop=$(playerctl loop 2>/dev/null || echo None); " +
+            "echo \"$pos;$len;$shuf;$loop\""]
+        stdout: SplitParser {
+            splitMarker:"\n"
+            onRead: function(l){
+                const p=l.trim().split(";")
+                if(p.length>=4){
+                    root.mediaPosition = parseFloat(p[0]) || 0
+                    // mpris:length is in microseconds → convert to seconds
+                    root.mediaLength   = (parseFloat(p[1]) || 0) / 1000000
+                    root.shuffleStatus = (p[2].trim()==="On") ? "On" : "Off"
+                    const lv = p[3].trim()
+                    root.loopStatus = (lv==="Track") ? "Track" : (lv==="Playlist") ? "Playlist" : "None"
+                }
+            }
+        }
+        running: false
+    }
+    Timer {
+        interval:1000; repeat:true; running:root.mediaStatus!=="Stopped"
+        onTriggered: if(!posProc.running) posProc.running=true
+    }
+
+    // ── Cava for lockscreen ──────────────────────────────────────────────────
+    property var  cavaBars: []
+    property int  cavaN:    32
+    readonly property int cavaRange: 15
+
+    Process {
+        id: cavaLockProc
+        command: ["bash", "-c",
+            "SOCK=\"${XDG_RUNTIME_DIR}/hyprcandy-lock/cava.sock\"; " +
+            "while true; do [ -S \"$SOCK\" ] && nc -U \"$SOCK\" 2>/dev/null; sleep 3; done"]
+        stdout: SplitParser {
+            splitMarker: "\n"
+            onRead: function(line) {
+                const parts = line.trim().split(";").filter(function(v){ return /^\d+$/.test(v) })
+                if (parts.length < 2) return
+                const n = Math.min(parts.length, 64)
+                const prev = root.cavaBars
+                const nb = new Array(n)
+                for (let i = 0; i < n; i++) {
+                    const raw = Math.min(parseInt(parts[i]), root.cavaRange) / root.cavaRange
+                    const p = (prev && prev[i]) ? prev[i] : 0
+                    nb[i] = raw > p ? p * 0.25 + raw * 0.75 : p * 0.55 + raw * 0.45
+                }
+                root.cavaN = n; root.cavaBars = nb
+            }
+        }
+        Component.onCompleted: running = true
     }
 
     // ImageMagick: art → 192px circle PNG
@@ -321,6 +386,36 @@ ShellRoot {
 
     Process { id:ctlProc; property string _cmd:""; command:["bash","-c",ctlProc._cmd] }
     function playerAction(cmd){ ctlProc._cmd="playerctl "+cmd; if(!ctlProc.running) ctlProc.running=true }
+
+    // Seek to a specific position (seconds)
+    Process { id:seekProc; property string _cmd:"true"; command:["bash","-c",seekProc._cmd] }
+    function seekTo(sec) {
+        seekProc._cmd = "playerctl position " + Math.max(0,sec).toFixed(1)
+        if(!seekProc.running) seekProc.running = true
+    }
+
+    // Toggle shuffle: Off→On, On→Off
+    function toggleShuffle() {
+        const next = root.shuffleStatus === "On" ? "off" : "on"
+        ctlProc._cmd = "playerctl shuffle " + next
+        if(!ctlProc.running) ctlProc.running = true
+    }
+
+    // Cycle loop: None→Track→Playlist→None
+    function cycleLoop() {
+        let next = "None"
+        if (root.loopStatus === "None")     next = "Track"
+        else if (root.loopStatus === "Track")    next = "Playlist"
+        else                                     next = "None"
+        ctlProc._cmd = "playerctl loop " + next
+        if(!ctlProc.running) ctlProc.running = true
+    }
+
+    // Format seconds → mm:ss
+    function fmtTime(s) {
+        const m = Math.floor(s/60), sec = Math.floor(s%60)
+        return m + ":" + (sec<10?"0":"") + sec
+    }
 
     // ── Session lock ──────────────────────────────────────────────────────────
     WlSessionLock { id:sessionLock; locked:true
@@ -588,7 +683,7 @@ ShellRoot {
 
                         // ══════ ROW 2: media card | dials card ══════════════════
                         RowLayout {
-                            Layout.fillWidth:true; spacing:14; Layout.bottomMargin:4
+                            Layout.fillWidth:true; spacing:14; Layout.bottomMargin:4; Layout.topMargin:-6
 
                             // ── MEDIA CARD ──────────────────────────────────────
                             Rectangle {
@@ -603,38 +698,96 @@ ShellRoot {
                                     anchors { left:parent.left; right:parent.right; top:parent.top; margins:18 }
                                     spacing:8
 
-                                    // Album disc
+                                    // Album disc + radial cava ring
                                     Item {
                                         Layout.alignment:Qt.AlignHCenter
-                                        width:96; height:96
+                                        readonly property int discSize: 96
+                                        readonly property int barMax:   18
+                                        readonly property int gap:      4
+                                        readonly property int ringSize: discSize + 2 * (gap + barMax + 2)
+                                        width:ringSize; height:ringSize
 
-                                        Rectangle { anchors.fill:parent; radius:48; color:root.cSurfHi }
-
-                                        // Pre-processed circular art
-                                        Image {
-                                            id:artImg
+                                        // Radial cava ring
+                                        Canvas {
+                                            id:cavaRing
                                             anchors.fill:parent
-                                            source: root._circularArtPath!==""
-                                                ? ("file://" + root._circularArtPath.split("?")[0] + "?v=" + root._circularArtPath.split("?")[1])
-                                                : ""
-                                            fillMode:Image.PreserveAspectFit
-                                            smooth:true; cache:false
-                                            visible:root._circularArtPath!==""&&status===Image.Ready
-                                        }
-                                        Text {
-                                            anchors.centerIn:parent; visible:!artImg.visible
-                                            text:"󰽲"
-                                            font.pixelSize:40; font.family:"Symbols Nerd Font Mono"
-                                            color:root.cOnSurfVar; opacity:0.35
+                                            property color pri: root.cPrimary
+                                            onPriChanged: requestPaint()
+                                            Connections {
+                                                target:root
+                                                function onCavaBarsChanged() { cavaRing.requestPaint() }
+                                            }
+                                            onPaint: {
+                                                const ctx=getContext("2d")
+                                                ctx.clearRect(0,0,width,height)
+                                                const bars=root.cavaBars, N=root.cavaN
+                                                if(!bars||N<2) return
+                                                const cx=width/2, cy=height/2
+                                                const rInner=parent.discSize/2+parent.gap
+                                                const bMax=parent.barMax
+                                                const dA=2*Math.PI/N, s0=-Math.PI/2
+                                                ctx.lineWidth=1.5; ctx.lineCap="round"
+                                                for(let i=0;i<N;i++){
+                                                    const amp=bars[i]||0
+                                                    if(amp<0.015) continue
+                                                    const a=s0+(i+0.5)*dA
+                                                    const len=amp*bMax
+                                                    const cos=Math.cos(a), sin=Math.sin(a)
+                                                    ctx.strokeStyle=Qt.rgba(pri.r,pri.g,pri.b,0.15+amp*0.85).toString()
+                                                    ctx.beginPath()
+                                                    ctx.moveTo(cx+rInner*cos, cy+rInner*sin)
+                                                    ctx.lineTo(cx+(rInner+len)*cos, cy+(rInner+len)*sin)
+                                                    ctx.stroke()
+                                                }
+                                            }
                                         }
 
-                                        // Smooth rotation — ~22fps feel via short duration
-                                        // Spindle removed; image itself rotates
-                                        RotationAnimator on rotation {
-                                            from:0; to:360
-                                            duration:100000
-                                            loops:Animation.Infinite
-                                            running:root.mediaStatus==="Playing"
+                                        // Disc with layer.enabled for circular clipping
+                                        Rectangle {
+                                            id:artDisc
+                                            anchors.centerIn:parent
+                                            width:parent.discSize; height:parent.discSize
+                                            radius:width/2
+                                            color:root.cSurfHi
+                                            layer.enabled:true
+
+                                            Image {
+                                                id:artImg
+                                                anchors.fill:parent
+                                                source: root._circularArtPath!==""
+                                                    ? ("file://" + root._circularArtPath.split("?")[0] + "?v=" + root._circularArtPath.split("?")[1])
+                                                    : ""
+                                                fillMode:Image.PreserveAspectCrop
+                                                smooth:true; cache:false
+                                                visible:root._circularArtPath!==""&&status===Image.Ready
+                                            }
+
+                                            Text {
+                                                anchors.centerIn:parent; visible:!artImg.visible
+                                                text:"󰽲"
+                                                font.pixelSize:40; font.family:"Symbols Nerd Font Mono"
+                                                color:root.cOnSurfVar; opacity:0.35
+                                            }
+
+                                            // Spindle center dot
+                                            Rectangle {
+                                                anchors.centerIn:parent; visible:artImg.visible
+                                                width:10; height:10; radius:5
+                                                color:root.cSurfHi; opacity:0.9
+                                                Rectangle {
+                                                    anchors.centerIn:parent
+                                                    width:4; height:4; radius:2
+                                                    color:root.cPrimary
+                                                }
+                                            }
+
+                                            // Rotation on the disc Rectangle itself
+                                            RotationAnimator {
+                                                target:artDisc
+                                                from:0; to:360; duration:12000
+                                                loops:Animation.Infinite
+                                                running:root.mediaStatus==="Playing"
+                                            }
                                         }
                                     }
 
@@ -651,9 +804,91 @@ ShellRoot {
                                         elide:Text.ElideRight; visible:text!==""
                                     }
 
-                                    // Controls
+                                    // ── Progress bar with gradient fill ──────────────
+                                    Item {
+                                        Layout.fillWidth:true; height:28
+                                        readonly property real prog: root.mediaLength>0
+                                            ? Math.min(root.mediaPosition/root.mediaLength, 1.0) : 0
+
+                                        // Time labels
+                                        Text {
+                                            anchors { left:parent.left; bottom:parent.bottom }
+                                            text:root.fmtTime(root.mediaPosition)
+                                            font.pixelSize:9; color:root.cOnSurfVar
+                                        }
+                                        Text {
+                                            anchors { right:parent.right; bottom:parent.bottom }
+                                            text:root.fmtTime(root.mediaLength)
+                                            font.pixelSize:9; color:root.cOnSurfVar
+                                        }
+
+                                        // Track background
+                                        Rectangle {
+                                            id:progTrack
+                                            anchors { left:parent.left; right:parent.right; verticalCenter:parent.verticalCenter; verticalCenterOffset:-4 }
+                                            height:4; radius:2
+                                            color:Qt.rgba(root.cOnSurf.r,root.cOnSurf.g,root.cOnSurf.b,0.12)
+                                        }
+
+                                        // Gradient fill
+                                        Rectangle {
+                                            anchors { left:progTrack.left; verticalCenter:progTrack.verticalCenter }
+                                            width:Math.max(4, parent.prog * progTrack.width)
+                                            height:progTrack.height; radius:2
+                                            gradient: Gradient {
+                                                orientation:Gradient.Horizontal
+                                                GradientStop { position:0.0; color:root.cSecondary }
+                                                GradientStop { position:1.0; color:root.cPrimary }
+                                            }
+                                        }
+
+                                        // Slider thumb
+                                        Rectangle {
+                                            x: Math.max(0, Math.min(parent.prog * progTrack.width - 5, progTrack.width - 10))
+                                            anchors.verticalCenter:progTrack.verticalCenter
+                                            width:10; height:10; radius:5
+                                            color:root.cPrimary
+                                            border.width:1; border.color:Qt.rgba(root.cOnSurf.r,root.cOnSurf.g,root.cOnSurf.b,0.30)
+                                        }
+
+                                        // Click / drag to seek
+                                        MouseArea {
+                                            anchors.fill:parent
+                                            onClicked: function(mouse) {
+                                                if(root.mediaLength<=0) return
+                                                const frac = Math.max(0, Math.min(mouse.x / progTrack.width, 1.0))
+                                                root.seekTo(frac * root.mediaLength)
+                                            }
+                                            onPositionChanged: function(mouse) {
+                                                if(!pressed || root.mediaLength<=0) return
+                                                const frac = Math.max(0, Math.min(mouse.x / progTrack.width, 1.0))
+                                                root.seekTo(frac * root.mediaLength)
+                                            }
+                                        }
+                                    }
+
+                                    // ── Controls: shuffle | prev | play | next | loop ──
                                     RowLayout {
-                                        Layout.alignment:Qt.AlignHCenter; spacing:10
+                                        Layout.alignment:Qt.AlignHCenter; spacing:6
+
+                                        // Shuffle button
+                                        Rectangle {
+                                            width:28; height:28; radius:6
+                                            color: shufHov.containsMouse
+                                                ? Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.18)
+                                                : "transparent"
+                                            Behavior on color { ColorAnimation{duration:100} }
+                                            Text {
+                                                anchors.centerIn:parent
+                                                text: root.shuffleStatus==="On" ? "󰒝" : "󰒞"
+                                                font.pixelSize:14; font.family:"Symbols Nerd Font Mono"
+                                                color: root.shuffleStatus==="On" ? root.cPrimary : root.cOnSurfVar
+                                                opacity: root.shuffleStatus==="On" ? 1.0 : 0.5
+                                            }
+                                            MouseArea { id:shufHov; anchors.fill:parent; hoverEnabled:true; onClicked:root.toggleShuffle() }
+                                        }
+
+                                        // Main transport: prev | play-pause | next
                                         Repeater {
                                             model:[
                                                 {i:"󰒮",c:"previous"},
@@ -685,6 +920,24 @@ ShellRoot {
                                                 }
                                                 MouseArea { id:mha; anchors.fill:parent; hoverEnabled:true; onClicked:root.playerAction(modelData.c) }
                                             }
+                                        }
+
+                                        // Loop button
+                                        Rectangle {
+                                            width:28; height:28; radius:6
+                                            color: loopHov.containsMouse
+                                                ? Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.18)
+                                                : "transparent"
+                                            Behavior on color { ColorAnimation{duration:100} }
+                                            Text {
+                                                anchors.centerIn:parent
+                                                text: root.loopStatus==="Track" ? "󰑘"
+                                                    : root.loopStatus==="Playlist" ? "󰑖" : "󰑗"
+                                                font.pixelSize:14; font.family:"Symbols Nerd Font Mono"
+                                                color: root.loopStatus!=="None" ? root.cPrimary : root.cOnSurfVar
+                                                opacity: root.loopStatus!=="None" ? 1.0 : 0.5
+                                            }
+                                            MouseArea { id:loopHov; anchors.fill:parent; hoverEnabled:true; onClicked:root.cycleLoop() }
                                         }
                                     }
                                 }
