@@ -300,7 +300,8 @@ PanelWindow {
         target: (typeof HyprlandFocusedClient !== "undefined") ? HyprlandFocusedClient : null
         ignoreUnknownSignals: true
         function onAddressChanged() {
-            if (HyprlandFocusedClient.address !== "")
+            if (typeof HyprlandFocusedClient !== "undefined"
+                && HyprlandFocusedClient.address !== "")
                 ControlCenterState.close()
         }
     }
@@ -357,8 +358,102 @@ PanelWindow {
         Connections {
             target: ControlCenterState
             function onVisibleChanged() {
-                if (ControlCenterState.visible) panel.forceActiveFocus()
+                if (ControlCenterState.visible) {
+                    panel.forceActiveFocus()
+                    // Refresh Hyprland config values on CC open
+                    _hyprReadOpacity.running  = true
+                    _hyprReadBlurSz.running   = true
+                    _hyprReadBlurP.running    = true
+                    _hyprReadGapsOut.running  = true
+                    _hyprReadGapsIn.running   = true
+                    _hyprReadBorder.running   = true
+                    _hyprReadRounding.running = true
+                    // Refresh dock config values on CC open
+                    _dockReadConf.running = true
+                }
             }
+        }
+
+        // ── Live Hyprland config values ────────────────────────────────────
+        property string _hyprOpacity:  "—"
+        property string _hyprBlurSz:   "—"
+        property string _hyprBlurP:    "—"
+        property string _hyprGapsOut:  "—"
+        property string _hyprGapsIn:   "—"
+        property string _hyprBorder:   "—"
+        property string _hyprRounding: "—"
+
+        Process {
+            id: _hyprReadOpacity
+            command: ["bash","-c","grep 'active_opacity' \"$HOME/.config/hypr/hyprviz.conf\" | grep -oP '[0-9.]+'"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprOpacity = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadBlurSz
+            command: ["bash","-c","sed -n '/blur {/,/}/{ s/.*size = \\([0-9]*\\).*/\\1/p }' \"$HOME/.config/hypr/hyprviz.conf\""]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprBlurSz = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadBlurP
+            command: ["bash","-c","grep 'passes = ' \"$HOME/.config/hypr/hyprviz.conf\" | grep -oP '[0-9]+'"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprBlurP = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadGapsOut
+            command: ["bash","-c","grep 'gaps_out' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprGapsOut = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadGapsIn
+            command: ["bash","-c","grep 'gaps_in' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprGapsIn = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadBorder
+            command: ["bash","-c","grep 'border_size' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprBorder = l.trim() } }
+            running: false
+        }
+        Process {
+            id: _hyprReadRounding
+            command: ["bash","-c","grep 'rounding' \"$HOME/.config/hypr/hyprlayout.conf\" 2>/dev/null | grep -oP '[0-9]+' | head -1"]
+            stdout: SplitParser { splitMarker:"\n"; onRead: function(l){ panel._hyprRounding = l.trim() } }
+            running: false
+        }
+
+        // ── Dock config values ────────────────────────────────────────────
+        property string _dockSpacing:  ""
+        property string _dockPadding:  ""
+        property string _dockBorderW:  ""
+        property string _dockBorderR:  ""
+        property string _dockIconSize: ""
+
+        Process {
+            id: _dockReadConf
+            property var _buf: []
+            command: ["bash","-c",
+                "f=\"$HOME/.hyprcandy/GJS/hyprcandydock/config.js\"; " +
+                "[ -f \"$f\" ] && grep -oP '(buttonSpacing|innerPadding|borderWidth|borderRadius|appIconSize):\\s*[0-9]+' \"$f\""]
+            stdout: SplitParser {
+                splitMarker: "\n"
+                onRead: function(l) {
+                    const m = l.match(/(\\w+):\\s*(\\d+)/)
+                    if (!m) return
+                    switch (m[1]) {
+                        case "buttonSpacing": panel._dockSpacing = m[2]; break
+                        case "innerPadding":  panel._dockPadding = m[2]; break
+                        case "borderWidth":   panel._dockBorderW = m[2]; break
+                        case "borderRadius":  panel._dockBorderR = m[2]; break
+                        case "appIconSize":   panel._dockIconSize = m[2]; break
+                    }
+                }
+            }
+            running: false
         }
 
         // ── Clip wrapper — keeps children inside the panel's rounded corners ──
@@ -534,7 +629,7 @@ PanelWindow {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                 hoverEnabled: true
                                 onClicked: {
-                                    mainStack.currentIndex = modelData.idx
+                                    mainStack.currentIndex = index
                                     barSubStack.currentIndex = 0
                                     ccTabSettings.activeTab = modelData.idx
                                 }
@@ -2829,7 +2924,7 @@ PanelWindow {
             Row {
                 anchors.fill: parent; anchors.margins: 2; spacing: 2
                 Repeater {
-                    model: options
+                    model: _segRoot.options
                     delegate: Rectangle {
                         required property string modelData
                         property bool _isCurrent: _sgRoot.current === modelData

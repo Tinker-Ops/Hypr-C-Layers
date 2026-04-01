@@ -426,6 +426,36 @@ ShellRoot {
         if(!ctlProc.running) ctlProc.running=true
     }
 
+    // Seek to a specific position (seconds)
+    Process { id:seekProc; property string _cmd:"true"; command:["bash","-c",seekProc._cmd] }
+    function seekTo(sec) {
+        seekProc._cmd = "playerctl position " + Math.max(0,sec).toFixed(1)
+        if(!seekProc.running) seekProc.running = true
+    }
+
+    // Toggle shuffle: Off→On, On→Off
+    function toggleShuffle() {
+        const next = root.shuffleStatus === "On" ? "off" : "on"
+        ctlProc._cmd = "playerctl shuffle " + next
+        if(!ctlProc.running) ctlProc.running = true
+    }
+
+    // Cycle loop: None→Track→Playlist→None
+    function cycleLoop() {
+        let next = "None"
+        if (root.loopStatus === "None")     next = "Track"
+        else if (root.loopStatus === "Track")    next = "Playlist"
+        else                                     next = "None"
+        ctlProc._cmd = "playerctl loop " + next
+        if(!ctlProc.running) ctlProc.running = true
+    }
+
+    // Format seconds → mm:ss
+    function fmtTime(s) {
+        const m = Math.floor(s/60), sec = Math.floor(s%60)
+        return m + ":" + (sec<10?"0":"") + sec
+    }
+
     // ── Session lock ──────────────────────────────────────────────────────────
     WlSessionLock { id:sessionLock; locked:true
         WlSessionLockSurface {
@@ -971,6 +1001,24 @@ ShellRoot {
                                                 }
                                                 MouseArea { id:mha; anchors.fill:parent; hoverEnabled:true; onClicked:root.playerAction(modelData.c) }
                                             }
+                                        }
+
+                                        // Loop button
+                                        Rectangle {
+                                            width:28; height:28; radius:6
+                                            color: loopHov.containsMouse
+                                                ? Qt.rgba(root.cPrimary.r,root.cPrimary.g,root.cPrimary.b,0.18)
+                                                : "transparent"
+                                            Behavior on color { ColorAnimation{duration:100} }
+                                            Text {
+                                                anchors.centerIn:parent
+                                                text: root.loopStatus==="Track" ? "󰑘"
+                                                    : root.loopStatus==="Playlist" ? "󰑖" : "󰑗"
+                                                font.pixelSize:14; font.family:"Symbols Nerd Font Mono"
+                                                color: root.loopStatus!=="None" ? root.cPrimary : root.cOnSurfVar
+                                                opacity: root.loopStatus!=="None" ? 1.0 : 0.5
+                                            }
+                                            MouseArea { id:loopHov; anchors.fill:parent; hoverEnabled:true; onClicked:root.cycleLoop() }
                                         }
                                     }
                                 }
