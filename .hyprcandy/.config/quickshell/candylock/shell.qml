@@ -692,7 +692,7 @@ ShellRoot {
 
                         // ══════ ROW 2: media card | dials card ══════════════════
                         RowLayout {
-                            Layout.fillWidth:true; spacing:14; Layout.bottomMargin:4
+                            Layout.fillWidth:true; spacing:14; Layout.bottomMargin:4; Layout.topMargin:-6
 
                             // ── MEDIA CARD ──────────────────────────────────────
                             Rectangle {
@@ -759,44 +759,50 @@ ShellRoot {
                                             }
                                         }
 
+                                        // Disc with art — rotates when playing
                                         Rectangle {
-                                            anchors.fill:parent
-                                            anchors.margins: 24
-                                            radius: (width / 2)
-                                            color:root.cSurfHi
-                                            clip: true
-                                        }
+                                            id: artDisc
+                                            anchors.centerIn: parent
+                                            width: parent.width - 48; height: parent.height - 48
+                                            radius: width / 2
+                                            color: root.cSurfHi
+                                            layer.enabled: true  // circular clipping via layer
 
-                                        // Pre-processed circular art
-                                        Image {
-                                            id:artImg
-                                            anchors.fill:parent
-                                            anchors.margins: 24
-                                            source: root._circularArtPath!==""
-                                                ? ("file://" + root._circularArtPath.split("?")[0] + "?v=" + root._circularArtPath.split("?")[1])
-                                                : ""
-                                            fillMode:Image.PreserveAspectFit
-                                            smooth:true; cache:false
-                                            visible:root._circularArtPath!==""&&status===Image.Ready
-                                        }
-                                        Text {
-                                            anchors.centerIn:parent
-                                            anchors.margins: 24
-                                            visible:!artImg.visible
-                                            text:"󰽲"
-                                            font.pixelSize:40; font.family:"Symbols Nerd Font Mono"
-                                            color:root.cOnSurfVar; opacity:0.35
-                                        }
+                                            Image {
+                                                id: artImg
+                                                anchors.fill: parent
+                                                source: root._circularArtPath !== ""
+                                                    ? ("file://" + root._circularArtPath.split("?")[0] + "?v=" + root._circularArtPath.split("?")[1])
+                                                    : ""
+                                                fillMode: Image.PreserveAspectCrop
+                                                smooth: true; cache: false
+                                                visible: root._circularArtPath !== "" && status === Image.Ready
+                                            }
 
-                                        // Smooth rotation applied to a child Item so canvas stays fixed
-                                        Item {
-                                            anchors.fill: parent
-                                            anchors.margins: 24
+                                            Text {
+                                                anchors.centerIn: parent
+                                                visible: !artImg.visible
+                                                text: "󰽲"
+                                                font.pixelSize: 40; font.family: "Symbols Nerd Font Mono"
+                                                color: root.cOnSurfVar; opacity: 0.35
+                                            }
+
+                                            // Spindle center dot
+                                            Rectangle {
+                                                anchors.centerIn: parent; visible: artImg.visible
+                                                width: 10; height: 10; radius: 5
+                                                color: root.cSurfHi; opacity: 0.9
+                                                Rectangle {
+                                                    anchors.centerIn: parent
+                                                    width: 4; height: 4; radius: 2
+                                                    color: root.cPrimary
+                                                }
+                                            }
+
                                             RotationAnimator on rotation {
-                                                from:0; to:360
-                                                duration:100000
-                                                loops:Animation.Infinite
-                                                running:root.mediaStatus==="Playing"
+                                                from: 0; to: 360; duration: 12000
+                                                loops: Animation.Infinite
+                                                running: root.mediaStatus === "Playing"
                                             }
                                         }
                                     }
@@ -864,7 +870,7 @@ ShellRoot {
                                             // Filled portion with gradient
                                             Item {
                                                 x: 3; y: 3
-                                                width:  Math.max(0, (parent.width - 6) * parent.parent.parent._norm)
+                                                width:  Math.max(0, (parent.width - 6) * parent.parent._norm)
                                                 height: 8
                                                 clip: true
                                                 Rectangle {
@@ -887,7 +893,7 @@ ShellRoot {
                                                 style: Text.Outline; styleColor: Qt.rgba(0,0,0,0.25)
                                                 x: {
                                                     const tw = parent.width - 6
-                                                    const cx = 3 + tw * parent.parent.parent._norm - implicitWidth / 2
+                                                    const cx = 3 + tw * parent.parent._norm - implicitWidth / 2
                                                     return Math.max(1, Math.min(parent.width - implicitWidth - 1, cx))
                                                 }
                                                 y: (parent.height - implicitHeight) / 2
