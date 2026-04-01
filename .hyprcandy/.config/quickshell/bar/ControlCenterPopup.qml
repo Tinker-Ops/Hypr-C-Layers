@@ -1598,6 +1598,7 @@ PanelWindow {
 
     // ── Segmented control ────────────────────────────────────────────────
     component CCSegmented: RowLayout {
+        id: _segRoot
         property alias label: _sgl.text
         property var   options: []
         property string current: ""
@@ -1625,16 +1626,16 @@ PanelWindow {
             Row {
                 anchors.fill: parent; anchors.margins: 2; spacing: 2
                 Repeater {
-                    model: options
+                    model: _segRoot.options
                     delegate: Rectangle {
                         required property string modelData
-                        width: (parent.width - (options.length - 1) * 2) / options.length
+                        width: (parent.width - (_segRoot.options.length - 1) * 2) / _segRoot.options.length
                         height: parent.height; radius: 7
-                        color: current === modelData
+                        color: _segRoot.current === modelData
                             ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
                                       Theme.cInversePrimary.b, 0.82)
                             : "transparent"
-                        border.width: current === modelData ? 1 : 0
+                        border.width: _segRoot.current === modelData ? 1 : 0
                         border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g,
                                               Theme.cPrimary.b, 0.45)
 
@@ -1642,11 +1643,11 @@ PanelWindow {
                             anchors.centerIn: parent
                             text: modelData; color: Theme.cPrimary
                             font.family: Config.labelFont; font.pixelSize: 12
-                            font.weight: current === modelData ? Font.SemiBold : Font.Normal
+                            font.weight: _segRoot.current === modelData ? Font.SemiBold : Font.Normal
                         }
                         MouseArea {
                             anchors.fill: parent; cursorShape: Qt.PointingHandCursor
-                            onClicked: picked(modelData)
+                            onClicked: _segRoot.picked(modelData)
                         }
                         Behavior on color { ColorAnimation { duration: 120 } }
                     }
