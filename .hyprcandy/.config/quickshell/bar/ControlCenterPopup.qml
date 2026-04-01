@@ -73,9 +73,10 @@ PanelWindow {
     // When the user clicks into a real app window, close the control center.
     // This mirrors the startmenu's dismiss-on-focus pattern.
     Connections {
-        target: HyprlandFocusedClient
+        target: typeof HyprlandFocusedClient !== "undefined" ? HyprlandFocusedClient : null
         function onAddressChanged() {
-            if (HyprlandFocusedClient.address !== "")
+            if (typeof HyprlandFocusedClient !== "undefined"
+                && HyprlandFocusedClient.address !== "")
                 ControlCenterState.close()
         }
     }
@@ -179,7 +180,7 @@ PanelWindow {
                                 Image {
                                     id: userImg
                                     anchors.fill: parent
-                                    source: "file://" + Config.home + "/.config/hyprcandy/user-icon.png"
+                                    source: Config.home + "/.config/hyprcandy/user-icon.png"
                                     fillMode: Image.PreserveAspectCrop
                                     smooth: true
                                     mipmap: true
@@ -241,16 +242,17 @@ PanelWindow {
 
                         delegate: Rectangle {
                             required property var modelData
+                            required property int index
                             Layout.fillWidth: true
                             height: 38; radius: 11
-                            color: mainStack.currentIndex === modelData.idx
+                            color: mainStack.currentIndex === index
                                 ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
                                           Theme.cInversePrimary.b, 0.62)
                                 : (navHover.containsMouse
                                     ? Qt.rgba(Theme.cInversePrimary.r, Theme.cInversePrimary.g,
                                               Theme.cInversePrimary.b, 0.22)
                                     : "transparent")
-                            border.width: mainStack.currentIndex === modelData.idx ? 1 : 0
+                            border.width: mainStack.currentIndex === index ? 1 : 0
                             border.color: Qt.rgba(Theme.cPrimary.r, Theme.cPrimary.g,
                                                   Theme.cPrimary.b, 0.38)
 
@@ -267,7 +269,7 @@ PanelWindow {
                                 Text {
                                     text: modelData.label
                                     font.family: Config.labelFont; font.pixelSize: 13
-                                    font.weight: mainStack.currentIndex === modelData.idx
+                                    font.weight: mainStack.currentIndex === index
                                         ? Font.SemiBold : Font.Normal
                                     color: Theme.cPrimary
                                     anchors.verticalCenter: parent.verticalCenter
@@ -279,7 +281,7 @@ PanelWindow {
                                           verticalCenter: parent.verticalCenter }
                                 width: 3; height: 20; radius: 2
                                 color: Theme.cPrimary
-                                visible: mainStack.currentIndex === modelData.idx
+                                visible: mainStack.currentIndex === index
                             }
 
                             MouseArea {
@@ -287,7 +289,7 @@ PanelWindow {
                                 anchors.fill: parent; cursorShape: Qt.PointingHandCursor
                                 hoverEnabled: true
                                 onClicked: {
-                                    mainStack.currentIndex = modelData.idx
+                                    mainStack.currentIndex = index
                                     barSubStack.currentIndex = 0
                                 }
                             }
@@ -1360,7 +1362,7 @@ PanelWindow {
         running: false
         onExited: {
             userImg.source = ""
-            userImg.source = "file://" + Config.home + "/.config/hyprcandy/user-icon.png?" + Date.now()
+            userImg.source = Config.home + "/.config/hyprcandy/user-icon.png?" + Date.now()
         }
     }
 
@@ -1374,7 +1376,7 @@ PanelWindow {
         running: false
         onExited: {
             userImg.source = ""
-            userImg.source = "file://" + Config.home + "/.config/hyprcandy/user-icon.png?" + Date.now()
+            userImg.source = Config.home + "/.config/hyprcandy/user-icon.png?" + Date.now()
         }
     }
 

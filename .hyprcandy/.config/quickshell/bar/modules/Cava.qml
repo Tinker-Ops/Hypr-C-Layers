@@ -20,7 +20,8 @@ Item {
     //  in the Visibility sub-tab overrides this: when showCava is false,
     //  the module is always hidden; when showCava is true AND cavaAutoHide
     //  is false, the module is always shown regardless of mpris status.
-    property bool _mprisActive: false
+    // Start visible — only hide after confirming no player is active.
+    property bool _mprisActive: true
 
     // Poll mpris status periodically (lightweight — just checks for any player)
     Process {
@@ -44,7 +45,6 @@ Item {
     // Effective visibility: auto-hide when no mpris detected (unless override)
     readonly property bool _autoVisible: Config.cavaAutoHide ? root._mprisActive : true
     visible: _autoVisible
-    Behavior on visible { NumberAnimation { duration: 0 } }
 
     //  Non-collapse: always reserve full width when transparent-when-inactive.
     //  _sizer uses a placeholder string of cavaWidth first-bar chars so the
